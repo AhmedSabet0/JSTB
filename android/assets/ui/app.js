@@ -1858,7 +1858,7 @@
       if (f.category === 'Links' && f.value) list.push([f.label, valueText(f.value), valueText(f.value), true]);
     }
     const box = $('sh-answers');
-    box.innerHTML = list.map((x, i) => `<button type="button" class="ans-chip${x[3] || String(x[1]).length > 26 ? ' wide' : ''}" data-i="${i}"><small>${
+    box.innerHTML = list.map((x, i) => `<button type="button" class="ans-chip${x[3] || x[0] === 'Email' || String(x[1]).length > 18 ? ' wide' : ''}" data-i="${i}"><small>${
       esc(x[0])}</small><b>${esc(x[1])}</b></button>`).join('') || '<p class="hint">Your answers show up here once you save them in Your info.</p>';
     box.querySelectorAll('.ans-chip').forEach((b) => b.addEventListener('click', () => {
       const x = list[+b.dataset.i];
