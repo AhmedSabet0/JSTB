@@ -11,6 +11,7 @@ import java.io.File;
 import java.io.InputStreamReader;
 import java.nio.file.Files;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -127,6 +128,11 @@ public class EngineTest {
         @Override
         public void requestPermission(String which) {
             events.add("permission:" + which);
+        }
+
+        @Override
+        public void openLink(String url, String how, String jobId, String title) {
+            events.add("open:" + how + ":" + url + (jobId == null || jobId.isEmpty() ? "" : " job=" + jobId));
         }
 
         volatile String updState = "idle";
@@ -944,8 +950,10 @@ public class EngineTest {
         waitFor(() -> "running".equals(userState()), 20);
         TestServer.setPro(EMAIL, false);
         e5.join(30000);
+        // Whichever comes first stops it: the next report ("turned off") or the AI refusing the next request ("isn't active").
         check("Pro turned off: the run stops", !e5.running()
-                && Json.str(Util.getStatus(), "message").contains("turned off for your account"), Util.getStatus().get("message"));
+                && Json.str(Util.getStatus(), "message").matches("(?s).*(turned off for|isn't active on) your account.*"),
+                Util.getStatus().get("message"));
         TestServer.setPro(EMAIL, true);
 
         // 6. The admin's daily cap.
@@ -1000,6 +1008,92 @@ public class EngineTest {
     }
 
     // ------------------------------------------------------------------ main
+    // ------------------------------------------------------------------ jobs you apply to yourself (Google Play build)
+    static void copilot() throws Exception {
+        System.out.println("\n== Jobs you apply to yourself: links, the list, stages, reports");
+        File d = fresh("copilot");
+        write(d, "config.json", Json.pretty(config("KEYWORDS", "DevOps Engineer;Cloud Engineer", "DATE_POSTED", "day", "WORK_TYPE", "remote")));
+        TestPlatform play = new TestPlatform("classic");
+        play.selfUpdate = false;  // the Google Play build
+        Engine e = new Engine(play, d);
+        Api a = new Api(e);
+        Map<String, Object> r = Json.map(Json.parse(a.handle("/api/copilot/add", Json.stringify(Json.obj("text",
+                "Check out this job at Valeo: DevOps Engineer https://www.linkedin.com/comm/jobs/view/4012345678/?trackingId=x%3D&refId=y",
+                "subject", "")))));
+        Map<String, Object> it = Json.map(r.get("item"));
+        check("LinkedIn share: the job's plain link, title and company", "li:4012345678".equals(Json.str(it, "id"))
+                && "https://www.linkedin.com/jobs/view/4012345678/".equals(Json.str(it, "url")) && "DevOps Engineer".equals(Json.str(it, "title"))
+                && "Valeo".equals(Json.str(it, "company")) && "linkedin".equals(Json.str(it, "channel")), it);
+        r = Json.map(Json.parse(a.handle("/api/copilot/add", Json.stringify(Json.obj("text",
+                "https://www.linkedin.com/jobs/search/?currentJobId=4012345678&keywords=devops", "subject", "")))));
+        check("the same job from a search link is not added twice", Json.bool(Json.map(r.get("item")), "again")
+                && Json.arr(r.get("items")).size() == 1, r.get("item"));
+        r = Json.map(Json.parse(a.handle("/api/copilot/add", Json.stringify(Json.obj("text",
+                "Senior SRE at Instabug https://boards.greenhouse.io/instabug/jobs/123?gh_src=abc&utm_source=linkedin#app", "subject", "")))));
+        it = Json.map(r.get("item"));
+        check("company site: tracking bits removed, title and company from the text",
+                "https://boards.greenhouse.io/instabug/jobs/123".equals(Json.str(it, "url")) && "company".equals(Json.str(it, "channel"))
+                && "Senior SRE".equals(Json.str(it, "title")) && "Instabug".equals(Json.str(it, "company"))
+                && Json.str(it, "id").matches("c:[0-9a-f]{12}"), it);
+        String site = Json.str(it, "id");
+        r = Json.map(Json.parse(a.handle("/api/copilot/add", Json.stringify(Json.obj("text", "no link here", "subject", "")))));
+        check("a share without a link is explained", Boolean.FALSE.equals(r.get("ok")) && Json.str(r, "error").contains("link"), r);
+        Map<String, Object> c = Json.map(Json.parse(a.handle("/api/copilot", null)));
+        List<Object> links = Json.arr(c.get("search_links"));
+        check("one LinkedIn search per title: Easy Apply, past 24 hours, remote", links.size() == 2
+                && Json.str(Json.map(links.get(1)), "url").equals("https://www.linkedin.com/jobs/search/?keywords=Cloud+Engineer&f_AL=true"
+                + "&sortBy=DD&location=Egypt&f_TPR=r86400&f_WT=2"), links);
+        check("2 waiting", Json.num(Json.map(c.get("stats")), "waiting", 0) == 2, c.get("stats"));
+
+        a.handle("/api/copilot/open", Json.stringify(Json.obj("id", "li:4012345678")));
+        a.handle("/api/copilot/open", Json.stringify(Json.obj("id", site)));
+        List<String> opened = new ArrayList<>();
+        for (String ev : play.events) {
+            if (ev.startsWith("open:")) {
+                opened.add(ev);
+            }
+        }
+        check("LinkedIn jobs open in the LinkedIn app, company sites in the app's browser", opened.equals(Arrays.asList(
+                "open:linkedin:https://www.linkedin.com/jobs/view/4012345678/ job=li:4012345678",
+                "open:inapp:https://boards.greenhouse.io/instabug/jobs/123 job=" + site)), opened);
+        check("auto apply cannot start on the Google Play build", Json.str(Json.map(Json.parse(a.handle("/api/start",
+                Json.stringify(Json.obj("mode", "apply"))))), "error").contains("applies with you"));
+
+        r = Json.map(Json.parse(a.handle("/api/copilot/update", Json.stringify(Json.obj("id", "li:4012345678", "state", "applied")))));
+        check("marked applied: counted today", Json.num(Json.map(r.get("stats")), "today", 0) == 1
+                && "applied".equals(Json.str(Json.map(r.get("item")), "stage")), r.get("stats"));
+        Map<String, Object> tr = Json.map(Json.parse(a.handle("/api/tracker/stage", Json.stringify(Json.obj("id", "copilot:li:4012345678",
+                "stage", "interview")))));
+        check("tracker: the stage changes", Json.num(Json.map(tr.get("stages")), "interview", 0) == 1 && Json.num(tr, "total", 0) == 1, tr.get("stages"));
+        r = Json.map(Json.parse(a.handle("/api/tracker/stage", Json.stringify(Json.obj("id", "copilot:li:4012345678", "stage", "hired")))));
+        check("an unknown stage is refused", Boolean.FALSE.equals(r.get("ok")));
+        a.handle("/api/copilot/update", Json.stringify(Json.obj("id", site, "state", "skipped")));
+        a.handle("/api/copilot/remove", Json.stringify(Json.obj("id", site)));
+        c = Json.map(Json.parse(a.handle("/api/copilot", null)));
+        check("skip, then remove", Json.arr(c.get("items")).size() == 1, c.get("items"));
+        File saved = new File(d, "copilot.json");
+        check("kept in copilot.json across restarts", new Engine(new TestPlatform("classic"), d).copilot.list().size() == 1
+                && saved.isFile());
+        boolean reported = waitFor(() -> {
+            Map<String, Object> u;
+            try {
+                u = TestServer.admin("GET", "/admin/api/users/" + TestServer.uid(EMAIL), null);
+            } catch (Exception ex) {
+                return false;
+            }
+            for (Object o : Json.arr(u.get("applications"))) {
+                Map<String, Object> x = Json.map(o);
+                if ("li:4012345678".equals(Json.str(x, "job_id")) && "interview".equals(Json.str(x, "stage"))
+                        && "linkedin".equals(Json.str(x, "channel"))) {
+                    return true;
+                }
+            }
+            return false;
+        }, 20);
+        check("the server has it: LinkedIn, Interview", reported);
+        e.stop();
+    }
+
     public static void main(String[] args) throws Exception {
         ProcessBuilder pb = new ProcessBuilder("python3", new File(SCRATCH, "mock_server.py").getPath());
         pb.redirectErrorStream(true);
@@ -1062,6 +1156,9 @@ public class EngineTest {
             }
             if (which.equals("all") || which.equals("account")) {
                 account();
+            }
+            if (which.equals("all") || which.equals("copilot")) {
+                copilot();
             }
         } finally {
             CdpPage.stopChrome();

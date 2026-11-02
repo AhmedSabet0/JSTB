@@ -25,14 +25,24 @@ if [ -n "$SERVER_URL" ] && ! [[ "$SERVER_URL" =~ ^https://[A-Za-z0-9.-]+(:[0-9]+
   echo "SERVER_URL must look like https://autoapply.example.com" >&2; exit 1
 fi
 if [ ! -f "$KS" ]; then
-  if [ -n "${CI:-}" ]; then
-    echo "No keystore at $KS. Add the KEYSTORE_BASE64 secret (a new key could not update installed apps)." >&2; exit 1
+  if [ -z "${NEW_KEY:-}" ]; then
+    echo "No signing key at $KS. Point KEYSTORE=/path/to/autoapply.jks at your key (in GitHub Actions: the" >&2
+    echo "KEYSTORE_BASE64 secret). An app signed with a new key cannot update the installed one; NEW_KEY=1 makes one anyway." >&2
+    exit 1
   fi
+  mkdir -p "$(dirname "$KS")"
   keytool -genkeypair -keystore "$KS" -storepass "$KS_PASS" -keypass "$KS_PASS" -alias autoapply \
-    -keyalg RSA -keysize 2048 -validity 20000 -dname "CN=Auto Apply, O=Personal" >/dev/null 2>&1
+    -keyalg RSA -keysize 2048 -validity 20000 -dname "CN=Auto Apply, O=Personal" >/dev/null
+  echo "Made a new signing key: $KS (keep it safe, and never put it in the repo)."
 fi
 
 rm -rf "$OUT" && mkdir -p "$OUT/gen/com/autoapply/bot/app" "$OUT/classes"
+
+# The app's files: the Google Play build has no automatic applying, so it leaves out the LinkedIn page script.
+mkdir -p "$OUT/assets" && cp -r assets/. "$OUT/assets/"
+if [ "$FLAVOR" = play ]; then
+  rm -f "$OUT/assets/li.js"
+fi
 
 # The manifest for this flavor: the Play build leaves out the self-update parts.
 if [ "$FLAVOR" = play ]; then
@@ -65,7 +75,7 @@ compile_java() {
 if [ "$FLAVOR" = github ]; then
   aapt package -f -m -J "$OUT/gen" -M "$OUT/AndroidManifest.xml" -S res -I "$ANDROID_JAR"
   compile_java
-  aapt package -f -M "$OUT/AndroidManifest.xml" -S res -A assets -I "$ANDROID_JAR" -F "$OUT/unsigned.apk"
+  aapt package -f -M "$OUT/AndroidManifest.xml" -S res -A "$OUT/assets" -I "$ANDROID_JAR" -F "$OUT/unsigned.apk"
   (cd "$OUT" && aapt add unsigned.apk classes.dex >/dev/null)
   zipalign -f -p 4 "$OUT/unsigned.apk" "$OUT/aligned.apk"
   apksigner sign --ks "$KS" --ks-pass "pass:$KS_PASS" --key-pass "pass:$KS_PASS" --ks-key-alias autoapply \
@@ -78,7 +88,7 @@ fi
 # ---- Google Play: an Android App Bundle (resources in protobuf format from aapt2, assembled by bundletool)
 aapt2 compile --dir res -o "$OUT/res.zip"
 aapt2 link --proto-format -o "$OUT/base-proto.apk" -I "$ANDROID_JAR" --manifest "$OUT/AndroidManifest.xml" \
-  -A assets --java "$OUT/gen" --auto-add-overlay "$OUT/res.zip"
+  -A "$OUT/assets" --java "$OUT/gen" --auto-add-overlay "$OUT/res.zip"
 compile_java
 mkdir -p "$OUT/module"
 (cd "$OUT/module" && unzip -q ../base-proto.apk && mkdir -p manifest dex && mv AndroidManifest.xml manifest/ \

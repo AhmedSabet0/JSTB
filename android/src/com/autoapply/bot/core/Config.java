@@ -25,6 +25,7 @@ public final class Config {
         {"NEW_QUESTIONS", "ask"},
         {"ASK_TIMEOUT_MIN", "10"},
         {"UPDATE_SOURCE", "AhmedSabet0/JSTB"},
+        {"DAILY_GOAL", "10"},
         {"SETUP_DONE", ""},
     };
 

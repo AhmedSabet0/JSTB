@@ -91,10 +91,16 @@ public class UiServer {
             }
         }
 
+        public void openLink(String url, String how, String jobId, String title) {
+            EVENTS.add("open:" + how + ":" + url + (jobId == null || jobId.isEmpty() ? "" : " job=" + jobId));
+        }
+
         volatile String updState = "idle";
 
+        static final String FLAVOR = System.getProperty("flavor", "github");
+
         public Map<String, Object> buildInfo() {
-            return Json.obj("flavor", "github", "self_update", true);
+            return Json.obj("flavor", FLAVOR, "self_update", !"play".equals(FLAVOR));
         }
 
         public Map<String, Object> appVersion() {
@@ -138,6 +144,8 @@ public class UiServer {
         EngineTest.deleteTree(data);
         data.mkdirs();
         Util.writeText(new File(data, "config.json"), Json.pretty(Json.obj("KEYWORDS", "", "PAGES_PER_KEYWORD", "1")));
+        com.autoapply.bot.core.Account.flavor = P.FLAVOR;
+        com.autoapply.bot.core.Account.versionCode = Long.getLong("versionCode", 1L);
         Engine engine = new Engine(new P(), data);
         Api api = new Api(engine);
         File ui = new File(System.getProperty("assets"), "ui");
@@ -183,6 +191,7 @@ public class UiServer {
         server.start();
         System.out.println("UI_PORT=" + server.getAddress().getPort());
         System.out.println("SERVER=" + TestServer.base);
+        System.out.println("MOCK=" + mockPort);
         System.out.println("DATA=" + data);
         Thread.currentThread().join();
     }

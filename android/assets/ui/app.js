@@ -1,4 +1,6 @@
-/* Auto Apply (Android): setup, home, settings. Talks to the app through window.AA. */
+/* Auto Apply (Android): setup, home, your jobs, applications, profile and settings. Talks to the app through window.AA.
+   The Google Play build applies with you (Jobs: you send each application with the app's help); the GitHub build can
+   also apply by itself (auto apply). */
 (() => {
   'use strict';
 
@@ -72,42 +74,69 @@
   }
 
   // ------------------------------------------------------------------ navigation
-  const TITLES = { setup: 'Auto Apply', home: 'Auto Apply', settings: 'Settings', info: 'Your info', jobs: 'All jobs',
-    log: 'Activity' };
+  const TITLES = { setup: 'Auto Apply', home: 'Auto Apply', queue: 'Your jobs', tracker: 'Applied', profile: 'Profile',
+    settings: 'Settings', info: 'Your info', jobs: 'Auto apply history', log: 'Activity', update: 'Auto Apply' };
+  const TABS = ['home', 'queue', 'tracker', 'profile'];
+  const TAB_OF = { settings: 'profile', info: 'profile', jobs: 'profile', log: 'profile' };
+  const auto = () => !!(state && state.auto_apply);
+  const isPlay = () => !!(state && state.build && state.build.flavor === 'play');
+  const mustUpdate = () => !!(state && state.account && state.account.update && state.account.update.required);
   let view = null;
   const history = [];
   function go(v, opts = {}) {
-    if (view && view !== v && !opts.back && !['setup'].includes(v)) history.push(view);
-    if (v === 'home' || v === 'setup') history.length = 0;
+    if (mustUpdate() && v !== 'update') v = 'update';  // too old for the server: only the update screen
+    if (TABS.includes(v) || v === 'setup' || v === 'update') history.length = 0;
+    else if (view && view !== v && !opts.back) history.push(view);
+    closeSheets();
     view = v;
     document.querySelectorAll('.view').forEach((s) => { s.hidden = s.id !== `v-${v}`; });
     $('bar-title').textContent = TITLES[v] || 'Auto Apply';
-    const top = v === 'home' || v === 'setup';
+    const top = TABS.includes(v) || v === 'setup' || v === 'update';
     $('nav-back').hidden = top;
-    $('nav-settings').hidden = v !== 'home';
-    document.querySelector('.logo').style.display = top ? '' : 'none';
+    $('nav-settings').hidden = !TABS.includes(v);
+    document.querySelector('.logo').style.display = ['home', 'setup', 'update'].includes(v) ? '' : 'none';
+    const tabs = v !== 'setup' && v !== 'update';
+    $('tabbar').hidden = !tabs;
+    document.body.classList.toggle('tabs', tabs);
+    document.querySelectorAll('[data-tab]').forEach((b) => b.classList.toggle('on', b.dataset.tab === (TAB_OF[v] || v)));
     window.scrollTo(0, 0);
     if (v === 'settings') loadSettings();
+    if (v === 'profile') { loadSettings(); renderProfile(); }
     if (v === 'info') loadInfo();
     if (v === 'jobs') loadJobs();
+    if (v === 'queue') loadQueue();
+    if (v === 'tracker') loadTracker();
+    if (v === 'home') { loadQueue(true); loadTracker(true); }
+    if (v === 'update') renderForceUpdate();
     if (v === 'log') { const box = $('log'); box.scrollTop = box.scrollHeight; window.scrollTo(0, document.body.scrollHeight); }
     renderBar();
     renderQuestionBar();
   }
   function back() {
+    if (sheetOpen()) { closeSheets(); return true; }
     if (view === 'setup') {
-      const i = W_STEPS.indexOf(wStep);
-      if (i > 0 && wStep !== 'welcome') { wShow(W_STEPS[i - 1]); return true; }
+      const steps = wSteps();
+      const i = steps.indexOf(wStep);
+      if (i > 0 && wStep !== 'welcome') { wShow(steps[i - 1]); return true; }
       if (state && state.setup.setup_done) { go('home'); return true; }
       return false;
     }
-    if (view === 'home') return false;
+    if (view === 'home' || view === 'update') return false;
+    if (TABS.includes(view)) { go('home'); return true; }
     go(history.pop() || 'home', { back: true });
     return true;
   }
   window.aaBack = () => back();
   $('nav-back').addEventListener('click', () => back());
   $('nav-settings').addEventListener('click', () => go('settings'));
+  document.querySelectorAll('[data-tab]').forEach((b) => b.addEventListener('click', () => go(b.dataset.tab)));
+  // The keyboard covers the bottom of the screen: the tabs step aside while you type.
+  const TYPING = 'input:not([type=checkbox]):not([type=radio]):not([type=range]):not([type=file]), textarea, select';
+  document.addEventListener('focusin', (e) => { if (e.target.matches && e.target.matches(TYPING)) document.body.classList.add('typing'); });
+  document.addEventListener('focusout', () => setTimeout(() => {
+    const a = document.activeElement;
+    if (!a || !a.matches || !a.matches(TYPING)) document.body.classList.remove('typing');
+  }, 60));
   document.querySelectorAll('[data-go]').forEach((b) => b.addEventListener('click', () => go(b.dataset.go)));
   document.querySelectorAll('[data-share]').forEach((b) => b.addEventListener('click',
     () => api('/api/share', { what: b.dataset.share }).catch((e) => toast(e.message, true))));
@@ -127,11 +156,25 @@
     } catch (e) {
       return;
     }
+    document.body.classList.toggle('has-auto', auto());
+    document.body.classList.toggle('no-auto', !auto());
     if (firstState) {
       firstState = false;
-      if (!state.setup.setup_done) startSetup(); else go('home');
+      if (mustUpdate()) go('update');
+      else if (!state.setup.setup_done) startSetup();
+      else go('home');
+      setTimeout(takePending, 50);
+    } else if (mustUpdate() && view !== 'update') {
+      go('update');
+    } else if (!mustUpdate() && view === 'update') {
+      go(state.setup.setup_done ? 'home' : 'setup');
+      if (!state.setup.setup_done) startSetup();
     }
     renderHome();
+    renderDesk();
+    renderAnnounce();
+    renderForceUpdate();
+    if (view === 'profile') renderProfile();
     renderBar();
     renderQuestion(state.running ? state.question : null);
     renderUpdate(state.update, state.running);
@@ -147,8 +190,15 @@
     $('info-sub').textContent = state.facts ? `${plural(state.facts, 'answer')} you can reuse, by category` : 'What forms ask about you, by category';
   }
   let lastAccCheck = Date.now();
+  let lastLists = 0;
   async function loop() {
     await refresh();
+    if (state && state.setup.setup_done && !document.hidden && Date.now() - lastLists > 20000
+      && ['home', 'queue', 'tracker'].includes(view) && !sheetOpen()) {
+      lastLists = Date.now();
+      loadQueue(true);
+      loadTracker(true);
+    }
     if (state && state.setup.account && !acc().pro && !document.hidden && Date.now() - lastAccCheck > 60000) {
       lastAccCheck = Date.now();
       api('/api/account/refresh', {}).catch(() => {});
@@ -168,8 +218,10 @@
   }
 
   // ------------------------------------------------------------------ setup wizard
-  const W_STEPS = ['welcome', 'account', 'cv', 'answers', 'jobs', 'linkedin', 'done'];
-  const W_PARTS = ['account', 'cv', 'answers', 'jobs', 'linkedin'];
+  // The Google Play build needs no LinkedIn sign-in (you apply in the LinkedIn app) and no background work.
+  const wSteps = () => (auto() ? ['welcome', 'account', 'cv', 'answers', 'jobs', 'linkedin', 'done']
+    : ['welcome', 'account', 'cv', 'answers', 'jobs', 'done']);
+  const wParts = () => (auto() ? ['account', 'cv', 'answers', 'jobs', 'linkedin'] : ['account', 'cv', 'answers', 'jobs']);
   let wStep = null;
   let profileData = null;   // GET /api/profile
   let suggest = null;       // read from the CV
@@ -181,7 +233,7 @@
     if (!setup.has_cv) return 'cv';
     if (!setup.profile_done) return 'answers';
     if (!setup.has_search) return 'jobs';
-    if (!setup.signed_in) return 'linkedin';
+    if (auto() && !setup.signed_in) return 'linkedin';
     return 'done';
   }
   async function startSetup(step) {
@@ -194,9 +246,10 @@
   function wShow(step) {
     wStep = step;
     document.querySelectorAll('.step').forEach((s) => { s.hidden = s.dataset.step !== step; });
-    const at = W_PARTS.indexOf(step);
+    const parts = wParts();
+    const at = parts.indexOf(step);
     $('w-progress').hidden = at < 0;
-    $('w-progress').innerHTML = W_PARTS.map((p, i) => `<i class="${i < at ? 'done' : i === at ? 'now' : ''}"></i>`).join('');
+    $('w-progress').innerHTML = parts.map((p, i) => `<i class="${i < at ? 'done' : i === at ? 'now' : ''}"></i>`).join('');
     if (step === 'account') wAccState();
     if (step === 'cv') cvStates();
     if (step === 'answers') {
@@ -217,7 +270,7 @@
     backBtn.hidden = wStep === 'welcome';
     backBtn.textContent = 'Back';
     const labels = { welcome: 'Get started', account: accLabel(), cv: 'Continue', answers: 'Save and continue',
-      jobs: 'Continue', linkedin: s.signed_in ? 'Continue' : 'Skip for now', done: 'Start applying' };
+      jobs: 'Continue', linkedin: s.signed_in ? 'Continue' : 'Skip for now', done: auto() ? 'Start applying' : 'Find jobs' };
     if (!next.dataset.busy) next.textContent = labels[wStep] || 'Continue';
     next.disabled = (wStep === 'cv' && !s.has_cv) || !!next.dataset.busy;
     if (wStep === 'linkedin') {
@@ -236,9 +289,9 @@
       else if (wStep === 'account') await wAccount();
       else if (wStep === 'cv') wShow('answers');
       else if (wStep === 'answers') { if (await saveProfile($('w-answers'))) wShow('jobs'); }
-      else if (wStep === 'jobs') { if (await wSaveJobs()) wShow('linkedin'); }
+      else if (wStep === 'jobs') { if (await wSaveJobs()) wShow(auto() ? 'linkedin' : 'done'); }
       else if (wStep === 'linkedin') wShow('done');
-      else if (wStep === 'done') await finishSetup(true);
+      else if (wStep === 'done') await finishSetup(auto());
     } catch (e) {
       toast(e.message, true);
     }
@@ -339,12 +392,19 @@
     const titles = wTitleEditor.get();
     if (!titles.length) { toast('Add at least one job title.', true); return false; }
     await api('/api/settings', { KEYWORDS: titles.join('\n'), LOCATION: $('w-location').value.trim() });
+    wTitleEditor.clean();
+    sTitleEditor.clean();
     await refresh();
     return true;
   }
 
   async function finishSetup(start) {
     await api('/api/setup', { done: true });
+    if (!auto()) {
+      await refresh();
+      go('home');
+      return;
+    }
     if (start) {
       busy($('w-next'), 'Starting…');
       try {
@@ -556,9 +616,10 @@
   function titleEditor(box, input, addBtn, sugBox) {
     let list = [];
     let sugs = [];
+    let dirty = false;  // changed here and not saved yet
     const paint = () => {
       box.innerHTML = list.map((t, i) => `<span class="tchip">${esc(t)}<button type="button" data-i="${i}" aria-label="Remove ${esc(t)}">×</button></span>`).join('');
-      box.querySelectorAll('button').forEach((b) => b.addEventListener('click', () => { list.splice(+b.dataset.i, 1); paint(); }));
+      box.querySelectorAll('button').forEach((b) => b.addEventListener('click', () => { list.splice(+b.dataset.i, 1); dirty = true; paint(); }));
       if (sugBox) {
         const left = sugs.filter((s) => !list.some((t) => t.toLowerCase() === s.toLowerCase()));
         sugBox.innerHTML = left.map((s) => `<button type="button">+ ${esc(s)}</button>`).join('');
@@ -567,14 +628,15 @@
     };
     const add = (t) => {
       const v = String(t || '').trim();
-      if (v && !list.some((x) => x.toLowerCase() === v.toLowerCase())) list.push(v);
+      if (v && !list.some((x) => x.toLowerCase() === v.toLowerCase())) { list.push(v); dirty = true; }
       paint();
     };
     addBtn.addEventListener('click', () => { add(input.value); input.value = ''; input.focus(); });
     input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); addBtn.click(); } });
     return {
       get: () => { if (input.value.trim()) { add(input.value); input.value = ''; } return list.slice(); },
-      set: (l) => { list = l.slice(); paint(); },
+      set: (l) => { if (!dirty) { list = l.slice(); paint(); } },
+      clean: () => { dirty = false; },
       suggest: (l) => { sugs = l || []; paint(); },
     };
   }
@@ -758,10 +820,13 @@
     if (!s.setup.account || !s.setup.has_cv) {
       items.push(['', '<b>Finish the setup</b><span>The app needs your account and your CV before it can apply.</span>',
         '<button class="btn primary" data-act="setup" type="button">Continue the setup</button>']);
-    } else if (!(s.account || {}).pro) {
+    } else if (!(s.account || {}).pro && auto()) {
       items.push(['', `<b>Auto apply isn’t active on your account yet</b><span class="who">Signed in as ${esc((s.account || {}).email)}. You can start once it is active.</span>`,
         '<button class="btn" data-act="acc-check" type="button">Check again</button>']);
-    } else if (!s.setup.signed_in) {
+    } else if (!(s.account || {}).pro) {
+      items.push(['info', `<b>AI help isn’t active on your account yet</b><span class="who">Your jobs, your answers and Fill work now. Cover letters and the AI's answers to new questions start once it is active.</span>`,
+        '<button class="btn" data-act="acc-check" type="button">Check again</button>']);
+    } else if (!s.setup.signed_in && auto()) {
       items.push(['', '<b>Sign in to LinkedIn</b><span>Easy Apply only works from a signed-in account. You sign in once.</span>',
         '<button class="btn primary" data-act="signin" type="button">Sign in to LinkedIn</button>']);
     }
@@ -770,7 +835,7 @@
       items.push(['', `<b>${n === 1 ? 'A question is' : `${n} questions are`} waiting for your answer</b><span>Answer once and the jobs that waited are tried again by themselves.</span>`,
         '<button class="btn" data-act="answers" type="button">Answer</button>']);
     }
-    if (!perm.notifications || !perm.battery) {
+    if (auto() && (!perm.notifications || !perm.battery)) {
       items.push(['info', '<b>Keep it working with the screen off</b><span>Allow notifications and background work.</span>',
         `${perm.notifications ? '' : '<button class="btn" data-perm="notifications" type="button">Notifications</button>'}${
           perm.battery ? '' : '<button class="btn" data-perm="battery" type="button">Background</button>'}`]);
@@ -801,7 +866,7 @@
     if (btn) btn.disabled = true;
     try {
       const r = await api('/api/account/refresh', {});
-      toast(r.account.pro ? 'Auto apply is active. Press Start.' : 'Not active yet.');
+      toast(r.account.pro ? (auto() ? 'Auto apply is active. Press Start.' : 'AI help is active.') : 'Not active yet.');
     } catch (e) { toast(e.message, true); }
     if (btn) btn.disabled = false;
     refresh();
@@ -1181,14 +1246,19 @@
 
   // ------------------------------------------------------------------ settings
   const LIST_KEYS = ['SKIP_COMPANIES', 'SKIP_TITLE_WORDS'];
-  const PLAIN_KEYS = ['LOCATION', 'DATE_POSTED', 'PER_HOUR', 'PER_DAY', 'MIN_SCORE', 'ASK_TIMEOUT_MIN', 'UPDATE_SOURCE', 'ABOUT_ME'];
+  const PLAIN_KEYS = ['LOCATION', 'DATE_POSTED', 'PER_HOUR', 'PER_DAY', 'MIN_SCORE', 'ASK_TIMEOUT_MIN', 'UPDATE_SOURCE', 'ABOUT_ME',
+    'DAILY_GOAL'];
   async function loadSettings() {
     try {
       const d = await api('/api/settings');
-      for (const k of PLAIN_KEYS) { const el = $(`s-${k}`); if (el) el.value = d[k] == null ? '' : d[k]; }
-      for (const k of LIST_KEYS) $(`s-${k}`).value = String(d[k] || '').split(';').map((x) => x.trim()).filter(Boolean).join('\n');
+      // A field you changed keeps your value until it is saved (the settings are read again on each screen).
+      for (const k of PLAIN_KEYS) { const el = $(`s-${k}`); if (el && !el.dataset.dirty) el.value = d[k] == null ? '' : d[k]; }
+      for (const k of LIST_KEYS) {
+        if (!$(`s-${k}`).dataset.dirty) $(`s-${k}`).value = String(d[k] || '').split(';').map((x) => x.trim()).filter(Boolean).join('\n');
+      }
       sTitleEditor.set(String(d.KEYWORDS || '').split(';').map((x) => x.trim()).filter(Boolean));
-      document.querySelectorAll('#v-settings .chips').forEach((box) => {
+      document.querySelectorAll('.chips[data-key]').forEach((box) => {
+        if (box.dataset.dirty) return;
         const vals = String(d[box.dataset.key] || '').toLowerCase().split(/[,;\s]+/);
         box.querySelectorAll('input').forEach((i) => { i.checked = vals.includes(i.value); });
       });
@@ -1208,20 +1278,30 @@
     cvStates();
   }
   $('s-MIN_SCORE').addEventListener('input', () => { $('min-score-val').textContent = `${$('s-MIN_SCORE').value}/10`; });
+  ['input', 'change'].forEach((ev) => document.addEventListener(ev, (e) => {
+    const t = e.target;
+    if (!t || !t.closest) return;
+    const chips = t.closest('.chips[data-key]');
+    if (chips) chips.dataset.dirty = '1';
+    else if (t.id && /^s-[A-Z_]+$/.test(t.id)) t.dataset.dirty = '1';
+  }));
   document.querySelectorAll('.save-settings').forEach((btn) => btn.addEventListener('click', async () => {
     const body = {};
     for (const k of PLAIN_KEYS) { const el = $(`s-${k}`); if (el) body[k] = el.value; }
     for (const k of LIST_KEYS) body[k] = $(`s-${k}`).value;
     body.KEYWORDS = sTitleEditor.get().join('\n');
-    document.querySelectorAll('#v-settings .chips').forEach((box) => {
+    document.querySelectorAll('.chips[data-key]').forEach((box) => {
       body[box.dataset.key] = [...box.querySelectorAll('input:checked')].map((i) => i.value).join(',');
     });
     const newq = document.querySelector('input[name=newq]:checked');
     if (newq) body.NEW_QUESTIONS = newq.value;
     try {
       const r = await api('/api/settings', body);
+      document.querySelectorAll('[data-dirty]').forEach((x) => { delete x.dataset.dirty; });
+      sTitleEditor.clean();
       toast(r.running ? 'Saved. The question setting applies now, the rest from the next start.' : 'Saved.');
       refresh();
+      loadQueue(true);  // new searches for new job titles
     } catch (e) { toast(e.message, true); }
   }));
   $('btn-save-answers').addEventListener('click', async () => {
@@ -1232,9 +1312,12 @@
     $('acc-state').textContent = !a.signed_in ? 'Signed out' : a.pro ? 'Active' : 'Not active yet';
     $('acc-state').className = `tag ${!a.signed_in ? '' : a.pro ? 'good' : 'warn'}`;
     $('acc-who').innerHTML = a.signed_in ? `${esc(a.name || a.email)}${a.name ? `<small>${esc(a.email)}</small>` : ''}` : 'Not signed in';
-    $('acc-pro').textContent = !a.signed_in ? 'Sign in to use the AI and start auto apply.'
-      : a.pro ? `Auto apply is active.${a.max_per_day ? ` At most ${a.max_per_day} applications a day.` : ''}`
-        : 'Auto apply isn’t active on your account yet. You can start once it is.';
+    $('acc-pro').textContent = !auto() ? (!a.signed_in ? 'Sign in to use the AI that fills forms and writes cover letters.'
+      : a.pro ? 'AI help is active: forms, new questions and cover letters.'
+        : 'AI help isn’t active on your account yet. Your jobs, your answers and Fill work without it.')
+      : !a.signed_in ? 'Sign in to use the AI and start auto apply.'
+        : a.pro ? `Auto apply is active.${a.max_per_day ? ` At most ${a.max_per_day} applications a day.` : ''}`
+          : 'Auto apply isn’t active on your account yet. You can start once it is.';
     $('btn-acc-check').hidden = !a.signed_in;
     $('btn-acc-out').hidden = !a.signed_in;
     $('btn-acc-signin').hidden = !!a.signed_in;
@@ -1536,9 +1619,572 @@
   $('jobs-q').addEventListener('input', renderJobs);
   setInterval(() => { if (view === 'jobs' && !document.hidden) loadJobs(); }, 15000);
 
+  // ------------------------------------------------------------------ jobs you apply to (with the app's help)
+  const ICON = {
+    search: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15.5 14h-.8l-.3-.3A6.5 6.5 0 1 0 9.5 16a6.5 6.5 0 0 0 4.2-1.6l.3.3v.8l5 5 1.5-1.5-5-5zm-6 0a4.5 4.5 0 1 1 0-9 4.5 4.5 0 0 1 0 9z"/></svg>',
+    open: '<svg class="go" viewBox="0 0 24 24" aria-hidden="true"><path d="M19 19H5V5h7V3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7h-2v7zM14 3v2h3.6l-9.8 9.8 1.4 1.4L19 6.4V10h2V3h-7z"/></svg>',
+    globe: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm6.9 6h-3a15.7 15.7 0 0 0-1.3-3.6A8 8 0 0 1 18.9 8zM12 4c.8 1.2 1.5 2.6 1.9 4h-3.8c.4-1.4 1.1-2.8 1.9-4zM4.3 14a8.2 8.2 0 0 1 0-4h3.4a16.5 16.5 0 0 0 0 4H4.3zm.8 2h3a15.7 15.7 0 0 0 1.3 3.6A8 8 0 0 1 5.1 16zm3-8h-3a8 8 0 0 1 4.3-3.6C8.8 5.5 8.4 6.7 8 8zm3.9 12c-.8-1.2-1.5-2.6-1.9-4h3.8c-.4 1.4-1.1 2.8-1.9 4zm2.3-6H9.7a14.7 14.7 0 0 1 0-4h4.6a14.7 14.7 0 0 1 0 4zm.3 5.6c.6-1.1 1-2.3 1.3-3.6h3a8 8 0 0 1-4.3 3.6zm1.8-5.6a16.5 16.5 0 0 0 0-4h3.4a8.2 8.2 0 0 1 0 4h-3.4z"/></svg>',
+  };
+  const STAGES = ['applied', 'interview', 'offer', 'rejected'];
+  const STAGE_NAMES = { applied: 'Applied', interview: 'Interview', offer: 'Offer', rejected: 'Rejected' };
+  let queue = [];
+  let searchLinks = [];
+  let searchWhere = '';
+  const hostOf = (u) => { const m = /^https?:\/\/(?:www\.)?([^/:?#]+)/i.exec(String(u || '')); return m ? m[1] : ''; };
+  const ago = (ts) => {
+    const sec = Date.now() / 1000 - Number(ts || 0);
+    if (!ts || sec < 0) return '';
+    if (sec < 90) return 'just now';
+    if (sec < 3600) return `${Math.round(sec / 60)} min ago`;
+    if (sec < 86400) return `${Math.round(sec / 3600)} h ago`;
+    if (sec < 2 * 86400) return 'yesterday';
+    return new Date(ts * 1000).toLocaleDateString([], { month: 'short', day: 'numeric' });
+  };
+  const fmtDay = (ts) => (ts ? new Date(ts * 1000).toLocaleDateString([], { month: 'short', day: 'numeric' }) : '');
+  const waiting = () => queue.filter((x) => x.state === 'new');
+  // Best fits first, then the newest.
+  const nextJobs = () => waiting().slice().sort((a, b) => ((typeof b.fit === 'number' ? b.fit : 5) - (typeof a.fit === 'number' ? a.fit : 5))
+    || (b.added - a.added));
+  const findJob = (id) => queue.find((x) => x.id === id);
+  function chanTag(j) {
+    if (j.channel === 'linkedin') return '<span class="chan linkedin">LinkedIn</span>';
+    if (j.channel === 'auto') return '<span class="chan auto">Auto apply</span>';
+    return '<span class="chan">Company site</span>';
+  }
+  function tagsHtml(j) {
+    const f = typeof j.fit === 'number' ? j.fit : (typeof j.score === 'number' ? j.score : null);
+    return chanTag(j) + (f == null ? '' : `<span class="fit ${f >= 7 ? 'high' : f >= 5 ? 'mid' : ''}">Fit ${f}/10</span>`);
+  }
+
+  async function loadQueue(quiet) {
+    try {
+      const d = await api('/api/copilot');
+      queue = d.items || [];
+      searchLinks = d.search_links || [];
+      searchWhere = d.location || '';
+      paintQueue();
+    } catch (e) { if (!quiet) toast(e.message, true); }
+  }
+  function paintQueue() {
+    renderDesk();
+    renderFind();
+    renderQueue();
+    if (!$('sheet').hidden) paintSheet(false);
+  }
+  function todayApplied() {
+    if (!state) return 0;
+    return ((state.copilot || {}).today || 0) + (auto() ? (state.stats || {}).today || 0 : 0);
+  }
+  function renderDesk() {
+    if (!state) return;
+    const list = nextJobs();
+    const n = list.length;
+    const goal = (state.stats && state.stats.goal) || 10;
+    const today = todayApplied();
+    $('goal-today').textContent = today;
+    $('goal-of').textContent = goal;
+    $('goal-meter').style.width = `${Math.min(100, Math.round((today / goal) * 100))}%`;
+    const job = list[0];
+    $('next-job').hidden = !job;
+    $('next-empty').hidden = !!job;
+    $('next-actions').hidden = !job;
+    $('next-label').textContent = !job ? 'Next up' : n === 1 ? '1 job waiting' : `${n} jobs waiting`;
+    if (job) {
+      $('next-title').textContent = job.title;
+      $('next-co').textContent = job.company || hostOf(job.url);
+      $('next-tags').innerHTML = tagsHtml(job);
+      $('next-apply').dataset.id = job.id;
+      $('next-more').hidden = n < 2;
+      $('next-more-n').textContent = 'See all';
+    }
+    const tab = $('tab-queue-n');
+    tab.hidden = !n;
+    tab.textContent = n > 99 ? '99+' : n;
+  }
+  $('next-apply').addEventListener('click', () => openSheet($('next-apply').dataset.id));
+  $('next-more').addEventListener('click', () => go('queue'));
+
+  // Searches: LinkedIn (in the LinkedIn app) for each of your job titles, and a few sites in the app's browser.
+  function siteLinks() {
+    const titles = searchLinks.map((l) => l.title);
+    if (!titles.length) return [];
+    const where = searchWhere || '';
+    const q = titles.slice(0, 3).map((t) => (titles.length > 1 ? `"${t}"` : t)).join(' OR ');
+    const out = [{ name: 'Google Jobs', url: `https://www.google.com/search?q=${encodeURIComponent(`${q} jobs ${where}`.trim())}&ibp=htl;jobs` }];
+    if (!where || /egypt|cairo|giza|alex|مصر/i.test(where)) {
+      out.push({ name: 'Wuzzuf', url: `https://wuzzuf.net/search/jobs/?q=${encodeURIComponent(titles[0])}` });
+    }
+    return out;
+  }
+  function renderFind() {
+    const box = $('find-links');
+    const sig = JSON.stringify([searchLinks, searchWhere]);
+    if (box.dataset.sig === sig) return;
+    box.dataset.sig = sig;
+    box.innerHTML = searchLinks.map((l, i) => `<button type="button" class="find-link" data-i="${i}">${ICON.search}<span><b>${
+      esc(l.title)}</b><small>LinkedIn${searchWhere ? `, ${esc(searchWhere)}` : ''}: Easy Apply, newest first</small></span>${ICON.open}</button>`).join('');
+    box.querySelectorAll('.find-link').forEach((b) => b.addEventListener('click', () => {
+      const l = searchLinks[+b.dataset.i];
+      api('/api/open-link', { url: l.url, how: 'linkedin' })
+        .then(() => toast('On a job you like: Share, then Auto Apply.'))
+        .catch((e) => toast(e.message, true));
+    }));
+    $('find-none').hidden = searchLinks.length > 0;
+    const sites = siteLinks();
+    $('find-sites').innerHTML = sites.map((x, i) => `<button type="button" class="site-chip" data-i="${i}">${ICON.globe}${esc(x.name)}</button>`).join('');
+    $('find-sites').querySelectorAll('.site-chip').forEach((b) => b.addEventListener('click', () => {
+      api('/api/open-link', { url: sites[+b.dataset.i].url, how: 'inapp' }).catch((e) => toast(e.message, true));
+    }));
+  }
+
+  async function addJob(input) {
+    const text = input.value.trim();
+    if (!text) { toast('Paste a link to a job first.', true); input.focus(); return; }
+    try {
+      const r = await api('/api/copilot/add', { text, subject: '' });
+      input.value = '';
+      input.blur();
+      queue = r.items || queue;
+      paintQueue();
+      toast(r.item.again ? 'Already in your jobs.' : 'Added to your jobs.');
+      openSheet(r.item.id);
+      refresh();
+    } catch (e) { toast(e.message, true); }
+  }
+  [['home-link', 'home-link-btn'], ['queue-link', 'queue-link-btn']].forEach(([i, b]) => {
+    $(b).addEventListener('click', () => addJob($(i)));
+    $(i).addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); addJob($(i)); } });
+  });
+
+  let qFilter = store('aa-queue-filter') === 'skipped' ? 'skipped' : 'new';
+  function renderQueue() {
+    const skipped = queue.filter((x) => x.state === 'skipped');
+    $('qf-new').textContent = waiting().length || '';
+    $('qf-skipped').textContent = skipped.length || '';
+    document.querySelectorAll('[data-qf]').forEach((b) => {
+      b.classList.toggle('on', b.dataset.qf === qFilter);
+      b.setAttribute('aria-selected', b.dataset.qf === qFilter ? 'true' : 'false');
+    });
+    const list = qFilter === 'new' ? nextJobs() : skipped;
+    $('queue-list').innerHTML = list.map((j) => `<li class="jcard"><button type="button" data-id="${esc(j.id)}"><span class="jc-title">${
+      esc(j.title)}</span><span class="jc-co">${esc(j.company || hostOf(j.url))}</span><span class="tags">${tagsHtml(j)}<span class="when">${
+      esc(ago(j.added))}</span></span></button></li>`).join('');
+    $('queue-list').querySelectorAll('button[data-id]').forEach((b) => b.addEventListener('click', () => openSheet(b.dataset.id)));
+    $('queue-empty').hidden = list.length > 0;
+    $('queue-empty-title').textContent = qFilter === 'new' ? 'No jobs waiting' : 'Nothing skipped';
+    $('queue-empty-text').textContent = qFilter === 'new'
+      ? 'Find jobs from the Home screen. On a job you like, tap Share and pick Auto Apply.'
+      : 'Jobs you skip wait here, in case you change your mind.';
+  }
+  document.querySelectorAll('[data-qf]').forEach((b) => b.addEventListener('click', () => {
+    qFilter = b.dataset.qf;
+    store('aa-queue-filter', qFilter);
+    renderQueue();
+  }));
+
+  // ------------------------------------------------------------------ the job sheet
+  let sheetId = null;
+  const sheetOpen = () => !$('sheet').hidden || !$('ask').hidden;
+  function closeSheets() {
+    $('sheet').hidden = true;
+    $('ask').hidden = true;
+    sheetId = null;
+    document.body.style.overflow = '';
+  }
+  document.querySelectorAll('.sheet-wrap [data-close]').forEach((x) => x.addEventListener('click', closeSheets));
+  function openSheet(id) {
+    if (!findJob(id)) return;
+    $('ask').hidden = true;
+    sheetId = id;
+    $('sheet').hidden = false;
+    document.body.style.overflow = 'hidden';
+    $('sheet').querySelector('.sheet-body').scrollTop = 0;
+    paintSheet(true);
+  }
+  function paintSheet(first) {
+    const j = findJob(sheetId);
+    if (!j) { closeSheets(); return; }
+    $('sh-title').textContent = j.title;
+    $('sh-co').textContent = j.company || hostOf(j.url);
+    $('sh-tags').innerHTML = tagsHtml(j) + (j.state === 'applied' ? `<span class="stage-label s-${esc(j.stage || 'applied')}">${
+      esc(STAGE_NAMES[j.stage] || 'Applied')} ${esc(fmtDay(j.applied_at))}</span>` : '') + (j.state === 'skipped' ? '<span class="chan">Skipped</span>' : '');
+    $('sh-why').hidden = !j.why;
+    $('sh-why').textContent = j.why || '';
+    const li = j.channel === 'linkedin';
+    $('sh-open').textContent = li ? 'Apply on LinkedIn' : 'Open the form here';
+    $('sh-open-hint').textContent = li ? 'Opens in the LinkedIn app. Copy your answers from below while you fill the form.'
+      : 'Fill the form puts your answers in, and the file button offers your CV. You check it and send it.';
+    if (first) {
+      renderAnswers();
+      $('sh-q').value = '';
+      $('sh-q-out').hidden = true;
+      $('sh-note').value = j.note || '';
+    }
+    const letter = j.letter || '';
+    $('sh-letter').hidden = !letter;
+    $('sh-letter').textContent = letter;
+    $('sh-letter-copy').hidden = !letter;
+    if (!$('sh-letter-btn').dataset.busy) $('sh-letter-btn').textContent = letter ? 'Write another' : 'Write one for this job';
+    $('sh-letter-hint').textContent = (state && state.account && state.account.pro) ? ''
+      : 'Cover letters need AI help on your account.';
+    const applied = j.state === 'applied';
+    $('sh-applied').textContent = applied ? 'Applied' : 'I applied';
+    $('sh-applied').disabled = applied;
+    $('sh-skip').textContent = j.state === 'skipped' ? 'Back to To apply' : 'Skip';
+    $('sh-skip').hidden = applied;
+    $('sheet').querySelector('.sheet-foot').style.gridTemplateColumns = applied ? '1fr' : '';
+  }
+
+  // Your answers, to copy into a form in another app (LinkedIn): one tap copies one answer.
+  const NOTICE_TEXT = (d) => (String(d) === '0' ? 'Immediately' : `${d} days`);
+  async function renderAnswers() {
+    if (!profileData) await loadProfile();
+    if (!facts.length) {
+      try { const d = await api('/api/facts'); facts = d.facts || []; categories = d.categories || categories; } catch (e) { /* none */ }
+    }
+    const p = (profileData && profileData.profile) || {};
+    const a = acc();
+    const cur = p.currency || 'EGP';
+    const years = yearsSince(p.graduation_year);
+    const list = [
+      ['Name', a.name], ['Email', a.email], ['Mobile', p.phone], ['City', p.city],
+      ['Expected salary', p.expected_salary ? `${p.expected_salary} ${cur}` : '', p.expected_salary],
+      ['Current salary', p.current_salary ? `${p.current_salary} ${cur}` : '', p.current_salary],
+      ['Notice period', p.notice_days !== undefined && p.notice_days !== '' ? NOTICE_TEXT(p.notice_days) : '', p.notice_days],
+      ['Years of experience', years >= 0 ? String(years) : ''],
+      ['Graduated', p.graduation_year], ['English', p.english], ['Military service', p.military],
+    ].filter((x) => x[1]);
+    for (const f of facts) {
+      if (f.category === 'Links' && f.value) list.push([f.label, valueText(f.value), valueText(f.value), true]);
+    }
+    const box = $('sh-answers');
+    box.innerHTML = list.map((x, i) => `<button type="button" class="ans-chip${x[3] || String(x[1]).length > 26 ? ' wide' : ''}" data-i="${i}"><small>${
+      esc(x[0])}</small><b>${esc(x[1])}</b></button>`).join('') || '<p class="hint">Your answers show up here once you save them in Your info.</p>';
+    box.querySelectorAll('.ans-chip').forEach((b) => b.addEventListener('click', () => {
+      const x = list[+b.dataset.i];
+      copyText(x[2] != null && x[2] !== '' ? x[2] : x[1]);
+      box.querySelectorAll('.copied').forEach((c) => c.classList.remove('copied'));
+      b.classList.add('copied');
+      toast(`Copied: ${x[0]}`);
+    }));
+  }
+  function copyText(t) {
+    try {
+      if (window.AA && window.AA.copy) { window.AA.copy(String(t)); return; }
+    } catch (e) { /* fall back */ }
+    try { navigator.clipboard.writeText(String(t)); } catch (e) { /* no clipboard */ }
+  }
+
+  // A question from the form: answered from your info, else by the AI from your CV.
+  async function askAnswer() {
+    const q = $('sh-q').value.trim();
+    const out = $('sh-q-out');
+    if (!q) { toast('Type the question the form asks.', true); $('sh-q').focus(); return; }
+    const long = /^(why|describe|tell|explain|what makes|how would|please describe|write)/i.test(q) || q.length > 90;
+    out.hidden = false;
+    out.innerHTML = '<span class="loading-line">Finding the answer…</span>';
+    $('sh-q-btn').disabled = true;
+    try {
+      const r = await api('/api/fill', { id: sheetId, fields: [{ key: 'q', label: q, kind: long ? 'textarea' : 'text', options: [], value: '',
+        placeholder: '', maxlength: 0, required: true }] });
+      const v = r.answers && r.answers.q;
+      if (v == null || v === '') {
+        out.innerHTML = `<p class="hint">${esc(r.ai_problem || 'Your answers do not cover this one. Add it in Your info, then it is ready for every form.')}</p>`;
+      } else {
+        const t = valueText(v);
+        out.innerHTML = `<button type="button" class="ans-chip wide"><small>Tap to copy</small><b>${esc(t)}</b></button>`;
+        out.querySelector('.ans-chip').addEventListener('click', (e) => {
+          copyText(t);
+          e.currentTarget.classList.add('copied');
+          toast('Copied the answer.');
+        });
+        facts = [];  // a new answer may have joined your info
+      }
+    } catch (e) {
+      out.innerHTML = `<p class="hint bad-text">${esc(e.message)}</p>`;
+    }
+    $('sh-q-btn').disabled = false;
+  }
+  $('sh-q-btn').addEventListener('click', askAnswer);
+  $('sh-q').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); askAnswer(); } });
+
+  $('sh-letter-btn').addEventListener('click', async () => {
+    const btn = $('sh-letter-btn');
+    const id = sheetId;
+    btn.dataset.busy = '1';
+    btn.disabled = true;
+    btn.textContent = 'Writing…';
+    try {
+      const r = await api('/api/copilot/letter', { id });
+      const it = findJob(id);
+      if (it) it.letter = r.letter;
+      toast('Cover letter ready. Tap Copy.');
+    } catch (e) { toast(e.message, true); }
+    delete btn.dataset.busy;
+    btn.disabled = false;
+    if (sheetId === id) paintSheet(false);
+  });
+  $('sh-letter-copy').addEventListener('click', () => {
+    const j = findJob(sheetId);
+    if (j && j.letter) { copyText(j.letter); toast('Copied the cover letter.'); }
+  });
+  $('sh-note').addEventListener('change', () => {
+    const id = sheetId;
+    api('/api/copilot/update', { id, note: $('sh-note').value }).then((r) => { queue = r.items || queue; toast('Note saved.'); })
+      .catch((e) => toast(e.message, true));
+  });
+
+  let awaiting = null;  // a job you went to apply to in the LinkedIn app
+  $('sh-open').addEventListener('click', async () => {
+    const j = findJob(sheetId);
+    if (!j) return;
+    try {
+      await api('/api/copilot/open', { id: j.id });
+      if (j.channel === 'linkedin') awaiting = { id: j.id, at: Date.now() };
+    } catch (e) { toast(e.message, true); }
+  });
+  $('sh-skip').addEventListener('click', async () => {
+    const j = findJob(sheetId);
+    if (!j) return;
+    const back = j.state === 'skipped';
+    try {
+      const r = await api('/api/copilot/update', { id: j.id, state: back ? 'new' : 'skipped' });
+      queue = r.items || queue;
+      closeSheets();
+      paintQueue();
+      toast(back ? 'Back in To apply.' : 'Skipped. It waits under Skipped.');
+      refresh();
+    } catch (e) { toast(e.message, true); }
+  });
+  $('sh-remove').addEventListener('click', async () => {
+    const id = sheetId;
+    try {
+      const r = await api('/api/copilot/remove', { id });
+      queue = r.items || queue;
+      closeSheets();
+      paintQueue();
+      toast('Removed from your jobs.');
+      refresh();
+    } catch (e) { toast(e.message, true); }
+  });
+  $('sh-applied').addEventListener('click', () => markApplied(sheetId));
+
+  async function markApplied(id) {
+    try {
+      const r = await api('/api/copilot/update', { id, state: 'applied' });
+      queue = r.items || queue;
+      paintQueue();
+      await refresh();
+      showSent(id);
+      loadTracker(true);
+    } catch (e) { toast(e.message, true); }
+  }
+
+  // ------------------------------------------------------------------ did you apply? / sent
+  let askId = null;
+  function showAsk(id) {
+    const j = findJob(id);
+    if (!j || j.state !== 'new') return;
+    closeSheets();
+    askId = id;
+    $('ask-q').hidden = false;
+    $('ask-sent').hidden = true;
+    $('ask-job').textContent = `${j.title}${j.company ? ` at ${j.company}` : ''}`;
+    $('ask').hidden = false;
+    document.body.style.overflow = 'hidden';
+  }
+  function showSent(id) {
+    closeSheets();
+    askId = id;
+    const next = nextJobs().find((x) => x.id !== id);
+    const goal = (state && state.stats && state.stats.goal) || 10;
+    const today = todayApplied();
+    $('ask-q').hidden = true;
+    $('ask-sent').hidden = false;
+    const stamp = $('ask-sent').querySelector('.stamp');
+    stamp.replaceWith(stamp.cloneNode(true));  // plays the stamp again
+    $('ask-sent-title').textContent = today >= goal ? `${today} today: you reached your goal` : `${today} of ${goal} today`;
+    $('ask-next-text').textContent = next ? `Next: ${next.title}${next.company ? ` at ${next.company}` : ''}`
+      : 'Your list is empty. Find more jobs from the Home screen.';
+    $('ask-next').hidden = !next;
+    $('ask-next').dataset.id = next ? next.id : '';
+    $('ask').hidden = false;
+    document.body.style.overflow = 'hidden';
+  }
+  $('ask-yes').addEventListener('click', () => markApplied(askId));
+  $('ask-later').addEventListener('click', () => { const id = askId; closeSheets(); openSheet(id); });
+  $('ask-skip').addEventListener('click', async () => {
+    try {
+      const r = await api('/api/copilot/update', { id: askId, state: 'skipped' });
+      queue = r.items || queue;
+      paintQueue();
+      toast('Skipped. It waits under Skipped.');
+    } catch (e) { toast(e.message, true); }
+    closeSheets();
+  });
+  $('ask-next').addEventListener('click', () => { const id = $('ask-next').dataset.id; closeSheets(); openSheet(id); });
+  $('ask-done').addEventListener('click', closeSheets);
+
+  // Back from the LinkedIn app, or from a company's site in the app's browser.
+  window.aaResumed = () => {
+    if (awaiting && Date.now() - awaiting.at > 3000) {
+      const id = awaiting.id;
+      awaiting = null;
+      loadQueue(true).then(() => showAsk(id));
+    }
+    refresh();
+  };
+  window.aaBrowserClosed = async (id, applied) => {
+    await loadQueue(true);
+    await refresh();
+    if (!id) return;
+    if (applied) { showSent(id); loadTracker(true); } else showAsk(id);
+  };
+  window.aaRefreshJobs = () => loadQueue(true);
+
+  // A job shared to the app (from LinkedIn or a browser).
+  async function takePending() {
+    let raw = '';
+    try { raw = window.AA && window.AA.pending ? window.AA.pending() : ''; } catch (e) { return; }
+    if (!raw) return;
+    let d = {};
+    try { d = JSON.parse(raw); } catch (e) { return; }
+    if (d.ok === false) { toast(d.error || 'That share had no job link.', true); return; }
+    if (!d.item) return;
+    if (!state || !state.setup.setup_done || mustUpdate()) { toast('Saved to your jobs. Finish the setup to apply.'); return; }
+    await loadQueue(true);
+    if (view !== 'queue') go('queue');
+    openSheet(d.item.id);
+    toast(d.item.again ? 'Already in your jobs.' : 'Added to your jobs.');
+  }
+  window.aaPending = () => { takePending(); };
+
+  // ------------------------------------------------------------------ applied: every application and its stage
+  let tracker = { items: [], stages: {}, total: 0 };
+  let trStage = '';
+  let trOpen = null;
+  async function loadTracker(quiet) {
+    try {
+      tracker = await api('/api/tracker');
+      renderTracker();
+    } catch (e) { if (!quiet) toast(e.message, true); }
+  }
+  function renderTracker() {
+    const st = tracker.stages || {};
+    $('tr-n-all').textContent = tracker.total || 0;
+    STAGES.forEach((k) => { $(`tr-n-${k}`).textContent = st[k] || 0; });
+    document.querySelectorAll('#tr-stages [data-st]').forEach((b) => {
+      b.classList.toggle('on', b.dataset.st === trStage);
+      b.setAttribute('aria-selected', b.dataset.st === trStage ? 'true' : 'false');
+    });
+    $('c-week').textContent = tracker.week || 0;
+    $('c-interviews').textContent = (st.interview || 0) + (st.offer || 0);
+    $('c-total').textContent = tracker.total || 0;
+    const q = $('tr-q').value.trim().toLowerCase();
+    const all = tracker.items || [];
+    const rows = all.filter((x) => (!trStage || x.stage === trStage) && (!q || `${x.title} ${x.company}`.toLowerCase().includes(q)));
+    $('tr-empty').hidden = all.length > 0;
+    $('tr-count').textContent = all.length ? (rows.length ? plural(rows.length, 'application') : 'Nothing here.') : '';
+    $('tr-list').innerHTML = rows.slice(0, 500).map((x) => {
+      const open = trOpen === x.id;
+      return `<li class="jcard" data-id="${esc(x.id)}"><button type="button" class="tr-main" aria-expanded="${open}"><span class="jc-title">${
+        esc(x.title || 'A job')}</span><span class="jc-co">${esc(x.company || hostOf(x.url))}</span><span class="tags"><span class="stage-label s-${
+        esc(x.stage)}">${esc(STAGE_NAMES[x.stage] || x.stage)}</span>${chanTag(x)}<span class="when">${esc(fmtDay(x.at))}</span></span>`
+        + `<span class="steps s-${esc(x.stage)}" aria-hidden="true"><i></i><i></i><i></i></span></button>${open
+        ? `<div class="stage-pick" role="group" aria-label="Stage">${STAGES.map((k) => `<button type="button" data-stage="${k}" class="${
+          k === x.stage ? 'on' : ''}">${STAGE_NAMES[k]}</button>`).join('')}</div><div class="stage-more">${
+          x.url ? '<button type="button" class="linklike" data-openjob>Open the job</button>' : '<span></span>'}</div>` : ''}</li>`;
+    }).join('');
+    $('tr-list').querySelectorAll('.jcard').forEach((li) => {
+      const id = li.dataset.id;
+      const x = all.find((y) => y.id === id);
+      li.querySelector('.tr-main').addEventListener('click', () => { trOpen = trOpen === id ? null : id; renderTracker(); });
+      li.querySelectorAll('[data-stage]').forEach((b) => b.addEventListener('click', () => setStage(id, b.dataset.stage)));
+      const o = li.querySelector('[data-openjob]');
+      if (o && x) o.addEventListener('click', () => api('/api/open-link', { url: x.url, how: /linkedin\.com/.test(x.url) ? 'linkedin' : 'browser' })
+        .catch((e) => toast(e.message, true)));
+    });
+  }
+  async function setStage(id, stage) {
+    try {
+      tracker = await api('/api/tracker/stage', { id, stage });
+      renderTracker();
+      toast(stage === 'interview' ? 'Interview: good luck!' : stage === 'offer' ? 'An offer, well done.' : `Marked as ${STAGE_NAMES[stage]}.`);
+      loadQueue(true);
+    } catch (e) { toast(e.message, true); }
+  }
+  document.querySelectorAll('#tr-stages [data-st]').forEach((b) => b.addEventListener('click', () => { trStage = b.dataset.st; renderTracker(); }));
+  $('tr-q').addEventListener('input', renderTracker);
+
+  // ------------------------------------------------------------------ profile, notices, updates the server asks for
+  function renderProfile() {
+    if (!state) return;
+    const a = acc();
+    const name = a.name || String(a.email || '').split('@')[0] || '';
+    $('me-initial').textContent = (name.trim()[0] || '?').toUpperCase();
+    $('me-name').textContent = a.signed_in ? name : 'Not signed in';
+    $('me-email').textContent = a.signed_in ? (a.email || '') : 'Sign in from Settings.';
+    $('me-state').textContent = !a.signed_in ? 'Signed out' : a.pro ? 'Active' : 'Not active yet';
+    $('me-state').className = `tag ${!a.signed_in ? '' : a.pro ? 'good' : 'warn'}`;
+    cvStates();
+  }
+  function renderAnnounce() {
+    const text = String((acc().announcement) || '').trim();
+    const hide = !text || store('aa-announce-x') === text;
+    $('announce').hidden = hide;
+    if (!hide) $('announce-text').textContent = text;
+    const n = (state && state.open_questions) || 0;
+    $('tab-profile-n').hidden = !n || !auto();
+    $('tab-profile-n').textContent = n;
+  }
+  $('announce-x').addEventListener('click', () => {
+    store('aa-announce-x', String(acc().announcement || '').trim());
+    $('announce').hidden = true;
+  });
+
+  let forceBusy = false;
+  function renderForceUpdate() {
+    if (!state || view !== 'update') return;
+    const u = state.update || {};
+    const dl = u.download || {};
+    const busyNow = ['downloading', 'installing', 'confirm'].includes(dl.state);
+    const btn = $('force-update');
+    btn.textContent = isPlay() ? 'Open Google Play' : busyNow || forceBusy ? 'Updating…' : 'Update now';
+    btn.disabled = !isPlay() && (busyNow || forceBusy);
+    $('force-status').textContent = isPlay() ? 'Google Play has the new version.' : (dl.state !== 'idle' && dl.message) || (u.checking ? 'Looking for the new version…' : '');
+    $('force-meter-wrap').hidden = dl.state !== 'downloading';
+    $('force-meter').style.width = `${dl.progress || 0}%`;
+  }
+  $('force-update').addEventListener('click', async () => {
+    try {
+      if (isPlay()) { await api('/api/update/store', {}); return; }
+      forceBusy = true;
+      renderForceUpdate();
+      if (state.running) await api('/api/stop', {});
+      let u = state.update || {};
+      if (!(u.last && u.last.available)) {
+        await api('/api/update/check', {});
+        for (let i = 0; i < 40; i++) {
+          await new Promise((r) => setTimeout(r, 500));
+          await refresh();
+          u = state.update || {};
+          if (!u.checking) break;
+        }
+      }
+      if (!(u.last && u.last.available)) {
+        toast((u.last && u.last.message) || 'The new version is not out yet. Try again in a few minutes.', true);
+      } else {
+        await api('/api/update/install', {});
+      }
+    } catch (e) { toast(e.message, true); }
+    forceBusy = false;
+    refresh();
+  });
+
   // ------------------------------------------------------------------ start
   window.aaRefresh = () => { refresh(); if (view === 'settings') loadSettings(); };
   window.aaShow = (v) => go(v === 'dashboard' ? 'home' : v);
+  setTimeout(() => { if (state && state.setup.setup_done) { loadQueue(true); loadTracker(true); } }, 400);
   setTimeout(() => api('/api/update/check', { auto: true }).catch(() => {}), 1500);
   loop();
   logLoop();

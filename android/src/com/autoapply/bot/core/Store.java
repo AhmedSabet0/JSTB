@@ -273,6 +273,19 @@ public final class Store {
     }
 
     /** Jobs that waited for an answer you have now given: the bot tries them again. */
+    /** The stage of a job you applied to: applied, interview, offer or rejected. Null when it is not an application. */
+    public synchronized Map<String, Object> setStage(String jobId, String stage) {
+        Map<String, Object> j = find(jobId);
+        if (j == null || !"applied".equals(Json.str(j, "status"))) {
+            return null;
+        }
+        j.put("stage", stage);
+        saveJobs();
+        Map<String, Object> out = new LinkedHashMap<String, Object>(j);
+        out.remove("qa");
+        return out;
+    }
+
     public synchronized int markAnswered(List<String> ids) {
         int n = 0;
         for (String id : ids) {

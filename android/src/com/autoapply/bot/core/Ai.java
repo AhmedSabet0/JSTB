@@ -145,6 +145,8 @@ public final class Ai {
             c.setRequestProperty("Authorization", "Bearer " + apiKey);
             c.setRequestProperty("Content-Type", "application/json");
             c.setRequestProperty("X-Title", "Auto Apply");
+            c.setRequestProperty("X-App-Flavor", Account.flavor);  // the server words its replies for this build
+            c.setRequestProperty("X-App-Version", String.valueOf(Account.versionCode));
             OutputStream out = c.getOutputStream();
             try {
                 out.write(body.getBytes(Util.UTF8));
@@ -270,6 +272,19 @@ public final class Ai {
         }
         location.append(Json.str(data, "location").trim());
         return keywords;
+    }
+
+    /** A short cover letter for this job, from your CV and notes. */
+    public String coverLetter(String title, String company, String description) {
+        String job = title + (company == null || company.isEmpty() ? "" : " at " + company);
+        String out = chat(Json.list(
+                msg("system", "You write short, specific cover letters for job applications. Plain text only."),
+                msg("user", "CV:\n" + cv + "\n\nCANDIDATE NOTES:\n" + (about.isEmpty() ? "none" : about) + "\n\nJOB: " + job + "\n"
+                        + (description == null || description.trim().isEmpty() ? "" : "DESCRIPTION:\n" + Util.cut(description, 4000) + "\n")
+                        + "\nWrite a cover letter of 120 to 180 words in the first person: why this role, two or three concrete "
+                        + "strengths from the CV that fit it, and a short closing. No address block, no date, no placeholders in "
+                        + "brackets. Sign with the candidate's name from the CV.")), 500);
+        return out.trim();
     }
 
     /** Which of your facts answers this question, asked in other words: {id, answer} formatted for the field, or null

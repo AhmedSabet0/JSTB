@@ -101,6 +101,7 @@
     document.querySelectorAll('.tabpane').forEach((p) => { p.hidden = p.id !== `t-${name}`; });
     store('aa-admin-tab', name);
     if (name === 'settings') fillSettings();
+    if (name === 'activity') { fillUserPick(); pollFeed(true); }
   }
   document.querySelectorAll('.tab').forEach((t) => t.addEventListener('click', () => showTab(t.dataset.tab)));
 
@@ -121,7 +122,8 @@
     $('v-app').hidden = false;
     $('l-privacy').textContent = `${location.origin}/privacy`;
     $('l-delete').textContent = `${location.origin}/delete-account`;
-    showTab(store('aa-admin-tab') === 'settings' ? 'settings' : 'users');
+    const tab = store('aa-admin-tab');
+    showTab(['settings', 'activity'].includes(tab) ? tab : 'users');
     render();
     startPolling();
   }
@@ -139,6 +141,7 @@
       data = await api('/admin/api/overview');
       render();
       if (!$('drawer').hidden && openId) loadUser(openId, true);
+      if (!$('t-activity').hidden) fillUserPick();
     } catch (e) {
       if (e instanceof SignedOut) showLogin();
     }
@@ -177,7 +180,9 @@
     if (u.state === 'lost') {
       return `<span class="st"><i class="dot lost"></i>No contact</span><span class="msg">Was applying, last seen ${ago(u.last_seen)}</span>`;
     }
-    return `<span class="st"><i class="dot"></i>Idle</span><span class="msg">${u.last_seen ? `Last seen ${ago(u.last_seen)}` : 'Has not opened auto apply yet'}</span>`;
+    const seen = u.last_seen ? ` · ${ago(u.last_seen)}` : '';
+    const msg = u.last_event || (u.last_seen ? 'No activity reported' : 'Has not opened the app yet');
+    return `<span class="st"><i class="dot"></i>Idle${seen}</span><span class="msg" title="${esc(msg)}">${esc(msg)}</span>`;
   }
 
   function visibleUsers() {
@@ -267,13 +272,63 @@
     refresh();
   });
 
+  // ------------------------------------------------------------------ live activity
+  const lineTone = (t) => (/APPLIED|^\s*\+ |Marked applied|Applied to/.test(t) ? 'ok'
+    : /Error|error|failed|Could not|Stopped after/.test(t) ? 'bad' : /Question for you|Waiting for your answer/.test(t) ? 'q' : '');
+  const clock = (ts) => new Date(ts * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+  function lineHtml(e, withWho) {
+    return `<li class="${lineTone(e.text)}${withWho ? '' : ' one'}"><span class="t">${clock(e.at)}</span>${withWho ? `<span class="who">${esc(e.email)}</span>` : ''}`
+      + `<span class="x">${esc(e.text)}</span></li>`;
+  }
+  let feedAfter = 0;
+  let feedUser = '';
+  let feedLines = [];
+  let feedTimer = null;
+  function fillUserPick() {
+    const sel = $('a-user');
+    const want = sel.value;
+    const opts = ['<option value="">Everyone</option>'].concat((data ? data.users : []).map((u) =>
+      `<option value="${u.id}">${esc(u.name ? `${u.name} (${u.email})` : u.email)}</option>`));
+    if (sel.dataset.sig !== opts.join('')) { sel.innerHTML = opts.join(''); sel.dataset.sig = opts.join(''); sel.value = want; }
+  }
+  function renderFeed() {
+    const q = $('a-q').value.trim().toLowerCase();
+    const shown = q ? feedLines.filter((e) => e.text.toLowerCase().includes(q) || (e.email || '').includes(q)) : feedLines;
+    const box = $('a-feed');
+    const atBottom = box.scrollTop + box.clientHeight >= box.scrollHeight - 30;
+    box.innerHTML = shown.map((e) => lineHtml(e, !feedUser)).join('');
+    $('a-empty').hidden = !!shown.length;
+    if (atBottom) box.scrollTop = box.scrollHeight;
+  }
+  async function pollFeed(reset) {
+    clearTimeout(feedTimer);
+    if ($('t-activity').hidden || !$('v-login').hidden) return;
+    if (reset || feedUser !== $('a-user').value) { feedUser = $('a-user').value; feedAfter = 0; feedLines = []; }
+    try {
+      const r = await api(`/admin/api/activity?after=${feedAfter}&limit=300${feedUser ? `&user=${feedUser}` : ''}`);
+      if (r.events.length) {
+        feedLines = feedLines.concat(r.events).slice(-1000);
+        feedAfter = r.last_id;
+        renderFeed();
+      } else if (reset) renderFeed();
+    } catch (e) { if (e instanceof SignedOut) { showLogin(); return; } }
+    if ($('a-live').checked && !document.hidden) feedTimer = setTimeout(() => pollFeed(false), 3000);
+  }
+  $('a-user').addEventListener('change', () => pollFeed(true));
+  $('a-q').addEventListener('input', renderFeed);
+  $('a-live').addEventListener('change', () => { if ($('a-live').checked) pollFeed(false); });
+  document.addEventListener('visibilitychange', () => { if (!document.hidden && !$('t-activity').hidden) pollFeed(false); });
+
   // ------------------------------------------------------------------ user details
   let openId = null;
+  let drawerAfter = 0;
   async function openUser(id) {
     openId = id;
     $('d-del-confirm').hidden = true;
     $('d-pw').value = '';
     $('d-apps').innerHTML = '<li class="muted">Loading…</li>';
+    $('d-feed').innerHTML = '';
+    drawerAfter = 0;
     const u = userById(id);
     if (u) fillDrawer(u);
     $('drawer').hidden = false;
@@ -292,6 +347,15 @@
       if (openId !== id) return;
       fillDrawer(r.user, quiet);
       renderApps(r.applications);
+      const a = await api(`/admin/api/activity?user=${id}&after=${drawerAfter}&limit=150`);
+      if (openId !== id) return;
+      if (a.events.length) {
+        const box = $('d-feed');
+        box.insertAdjacentHTML('beforeend', a.events.map((e) => lineHtml(e, false)).join(''));
+        while (box.children.length > 300) box.removeChild(box.firstChild);
+        box.scrollTop = box.scrollHeight;
+        drawerAfter = a.last_id;
+      } else if (!drawerAfter) $('d-feed').innerHTML = '<li class="muted"><span></span><span class="x">Nothing reported yet.</span></li>';
     } catch (e) {
       if (!quiet) fail(e);
       if (e.message && /not there/.test(e.message)) closeDrawer();
@@ -311,11 +375,17 @@
       ['Applied today', fmtNum(u.applied_today)], ['Last 7 days', fmtNum(u.applied_week)], ['All time', fmtNum(u.applied_total)],
       ['Last application', u.last_applied_at ? when(u.last_applied_at) : 'none yet'],
       ['Problems today', fmtNum(u.problems_today)], ['AI today', `${fmtNum(u.ai_today)} requests${u.tokens_today ? `, ${fmtNum(u.tokens_today)} tokens` : ''}`],
-      ['App', `${u.app_version ? `version ${esc(u.app_version)}` : '—'}${u.device ? ` on ${esc(u.device)}` : ''}`],
+      ['App', `${u.app_version ? `${u.flavor === 'play' ? 'Google Play' : u.flavor === 'github' ? 'GitHub' : ''} ${esc(u.app_version)}`
+        + `${u.version_code ? ` (code ${u.version_code})` : ''}` : '—'}${u.device ? ` on ${esc(u.device)}` : ''}`],
+      ['Applied with help today', fmtNum(u.helped_today)],
       ['Signed in on', `${u.devices} phone(s)`], ['Account created', when(u.created_at)],
       ['Pro since', u.pro && u.pro_changed_at ? when(u.pro_changed_at) : '—'],
     ];
     $('d-facts').innerHTML = facts.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('');
+    if (!quiet || ![$('d-cap'), $('d-caph')].includes(document.activeElement)) {
+      $('d-cap').value = u.max_per_day == null ? '' : u.max_per_day;
+      $('d-caph').value = u.max_per_hour == null ? '' : u.max_per_hour;
+    }
   }
 
   function renderApps(apps) {
@@ -326,13 +396,30 @@
     $('d-apps').innerHTML = apps.map((a) => {
       const [label, tone] = STATUS[a.status] || [a.status, ''];
       const title = a.url ? `<a href="${esc(a.url)}" target="_blank" rel="noopener noreferrer">${esc(a.title || a.job_id)}</a>` : esc(a.title || a.job_id);
-      return `<li><span class="t">${title}</span><span class="tag ${tone}">${esc(label)}${a.score != null ? ` · ${a.score}/10` : ''}</span>`
+      const via = { linkedin: 'LinkedIn, by hand', company: 'Company site', email: 'Email' }[a.channel] || '';
+      const stage = a.stage && a.stage !== 'applied' ? ` · ${a.stage[0].toUpperCase()}${a.stage.slice(1)}` : '';
+      return `<li><span class="t">${title}</span><span class="tag ${tone}">${esc(label)}${stage}${a.score != null ? ` · ${a.score}/10` : ''}</span>`
+        + `${via ? `<span class="c">${esc(via)}</span>` : ''}`
         + `<span class="c">${esc(a.company || '')}</span><span class="w">${when(a.at)}</span></li>`;
     }).join('');
   }
 
   $('d-pro').addEventListener('change', async () => { if (openId) await setPro(openId, $('d-pro').checked, $('d-pro')); loadUser(openId, true); });
   $('d-stop').addEventListener('click', async () => { if (openId) await stopUser(openId, $('d-stop')); loadUser(openId, true); });
+  $('d-caps-save').addEventListener('click', async () => {
+    try {
+      await api(`/admin/api/users/${openId}`, { max_per_day: $('d-cap').value.trim(), max_per_hour: $('d-caph').value.trim() });
+      toast('Limits saved. The app uses them from its next check (within 30 seconds while it applies).');
+      refresh();
+    } catch (e) { fail(e); }
+  });
+  $('d-revoke').addEventListener('click', async () => {
+    try {
+      await api(`/admin/api/users/${openId}`, { revoke_sessions: true });
+      toast('Signed out on every phone.');
+      loadUser(openId, true);
+    } catch (e) { fail(e); }
+  });
   $('d-note-save').addEventListener('click', async () => {
     try {
       await api(`/admin/api/users/${openId}`, { note: $('d-note').value });
@@ -373,6 +460,15 @@
     $('s-free').value = s.free_ai_per_day;
     $('s-pro').value = s.pro_ai_per_day;
     $('s-cap').value = s.max_per_day;
+    $('s-caph').value = s.max_per_hour;
+    $('s-announce').value = s.announcement || '';
+    $('s-minv-github').value = s.min_version_github;
+    $('s-minv-play').value = s.min_version_play;
+    $('s-playurl').value = s.play_url || '';
+    const vs = (data.totals && data.totals.versions) || [];
+    $('s-versions').innerHTML = vs.length ? vs.map((v) => `<li><span>${v.flavor === 'play' ? 'Google Play' : v.flavor === 'github' ? 'GitHub' : 'Unknown'} `
+      + `${esc(v.version)}${v.code ? ` <span class="muted">· code ${v.code}</span>` : ''}</span><b>${v.users} user${v.users === 1 ? '' : 's'}</b></li>`).join('')
+      : '<li class="muted">No app has reported yet.</li>';
     $('s-signups').checked = !!s.signups_open;
     $('s-autopro').checked = !!s.new_users_pro;
   }
@@ -412,7 +508,14 @@
   });
   $('f-limits').addEventListener('submit', (ev) => {
     ev.preventDefault();
-    saveSettings({ free_ai_per_day: $('s-free').value, pro_ai_per_day: $('s-pro').value, max_per_day: $('s-cap').value });
+    saveSettings({ free_ai_per_day: $('s-free').value, pro_ai_per_day: $('s-pro').value, max_per_day: $('s-cap').value,
+      max_per_hour: $('s-caph').value });
+  });
+  $('f-app').addEventListener('submit', (ev) => {
+    ev.preventDefault();
+    saveSettings({ announcement: $('s-announce').value.trim(), min_version_github: $('s-minv-github').value || 0,
+      min_version_play: $('s-minv-play').value || 0, play_url: $('s-playurl').value.trim() },
+    'Saved. Apps pick it up from their next check.');
   });
   $('f-accounts').addEventListener('submit', (ev) => {
     ev.preventDefault();

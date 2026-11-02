@@ -17,6 +17,9 @@ public final class Account {
     /** "Samsung SM-A546E" (shown to the admin). */
     public static volatile String device = "";
     public static volatile String appVersion = "";
+    /** The build ("github" or "play") and its versionCode: the server tells an app that is too old to update. */
+    public static volatile String flavor = "";
+    public static volatile long versionCode = 0;
 
     /** The server does not know this sign-in any more: sign in again. */
     public static class AuthError extends RuntimeException {
@@ -119,12 +122,27 @@ public final class Account {
         return (int) Json.num(Json.map(data.get("user")), "max_per_day", 0);
     }
 
-    /** What the last report learned: Pro on/off and the daily cap. */
-    synchronized void learned(boolean pro, int maxPerDay) {
+    /** The admin's cap on applications an hour (0 = none). */
+    public synchronized int maxPerHour() {
+        return (int) Json.num(Json.map(data.get("user")), "max_per_hour", 0);
+    }
+
+    /** True when the server says this version is too old to use. */
+    public synchronized boolean updateRequired() {
+        return Json.bool(Json.map(Json.map(data.get("user")).get("update")), "required");
+    }
+
+    /** What the last report learned: Pro, the caps, the admin's message and whether an update is required. */
+    synchronized void learned(Map<String, Object> r) {
         Map<String, Object> u = Json.map(data.get("user"));
-        if (Json.bool(u, "pro") != pro || Json.num(u, "max_per_day", 0) != maxPerDay) {
-            u.put("pro", pro);
-            u.put("max_per_day", maxPerDay);
+        String before = Json.stringify(u);
+        u.put("pro", Json.bool(r, "pro"));
+        for (String k : new String[]{"max_per_day", "max_per_hour", "announcement", "update"}) {
+            if (r.containsKey(k)) {
+                u.put(k, r.get(k));
+            }
+        }
+        if (!Json.stringify(u).equals(before)) {
             data.put("user", u);
             save();
         }
@@ -134,7 +152,9 @@ public final class Account {
     public synchronized Map<String, Object> info() {
         Map<String, Object> u = Json.map(data.get("user"));
         return Json.obj("signed_in", signedIn(), "email", Json.str(data, "email"), "name", Json.str(u, "name"),
-                "pro", Json.bool(u, "pro"), "max_per_day", Json.num(u, "max_per_day", 0), "server", server(),
+                "pro", Json.bool(u, "pro"), "max_per_day", Json.num(u, "max_per_day", 0),
+                "max_per_hour", Json.num(u, "max_per_hour", 0), "announcement", Json.str(u, "announcement"),
+                "update", Json.map(u.get("update")), "server", server(),
                 "server_built_in", serverBuiltIn(), "checked_at", Json.dbl(data, "checked_at", 0),
                 "ai_per_day", Json.num(u, "ai_per_day", 0), "ai_used_today", Json.num(u, "ai_used_today", 0),
                 "contact", Json.str(data, "contact"), "signups_open", !data.containsKey("signups_open") || Json.bool(data, "signups_open"));
@@ -236,6 +256,8 @@ public final class Account {
                 c.setReadTimeout(40000);
                 c.setRequestProperty("Accept", "application/json");
                 c.setRequestProperty("User-Agent", "AutoApply-Android/" + appVersion);
+                c.setRequestProperty("X-App-Flavor", flavor);
+                c.setRequestProperty("X-App-Version", String.valueOf(versionCode));
                 if (auth) {
                     c.setRequestProperty("Authorization", "Bearer " + token);
                 }

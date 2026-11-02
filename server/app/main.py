@@ -34,6 +34,9 @@ STATIC_FILES = {"admin.css", "admin.js", "figtree.woff2"}
 REPORT_EVERY = 30        # seconds between reports while auto apply runs
 ONLINE_FOR = 150         # a running app that reported this recently counts as running now
 KEPT_STATUSES = ("applied", "error", "stuck", "needs_answer")
+CHANNELS = ("auto", "linkedin", "company", "email")
+STAGES = ("", "applied", "interview", "offer", "rejected")
+EVENTS_KEPT = 3000       # activity lines kept per user
 ADMIN_HOURS = 12
 
 auth_limit = security.RateLimit(12, 600)     # sign-in / sign-up attempts per IP
@@ -133,11 +136,36 @@ def ai_used(user_id, day):
     return r["calls"] if r else 0
 
 
-def me_json(user):
+def app_info(request):
+    """(flavor, versionCode) the app sends in its headers."""
+    flavor = text(request.headers.get("x-app-flavor"), 10).lower()
+    try:
+        code = int(request.headers.get("x-app-version", "0"))
+    except ValueError:
+        code = 0
+    return (flavor if flavor in ("github", "play") else ""), code
+
+
+def limits(user, s):
+    """Applications a day / an hour for this user: the user's own cap from the admin, else the global one (0 = none)."""
+    day = user["max_per_day"] if user["max_per_day"] is not None else db.setting_int(s, "max_per_day")
+    hour = user["max_per_hour"] if user["max_per_hour"] is not None else db.setting_int(s, "max_per_hour")
+    return int(day or 0), int(hour or 0)
+
+
+def update_info(flavor, code, s):
+    need = db.setting_int(s, "min_version_play" if flavor == "play" else "min_version_github", 0, 10 ** 7)
+    return {"required": bool(code and need and code < need), "min_version": need, "play_url": s.get("play_url", "")}
+
+
+def me_json(user, request=None):
     s = db.settings()
+    day, hour = limits(user, s)
+    flavor, code = app_info(request) if request is not None else ("", 0)
     return {"id": user["id"], "email": user["email"], "name": user["name"], "pro": bool(user["pro"]),
-            "max_per_day": db.setting_int(s, "max_per_day"), "ai_per_day": ai_limit(user, s),
-            "ai_used_today": ai_used(user["id"], db.today()), "report_every": REPORT_EVERY}
+            "max_per_day": day, "max_per_hour": hour, "ai_per_day": ai_limit(user, s),
+            "ai_used_today": ai_used(user["id"], db.today()), "report_every": REPORT_EVERY,
+            "announcement": s.get("announcement", ""), "update": update_info(flavor, code, s)}
 
 
 def new_session(t, user_id, device):
@@ -218,7 +246,7 @@ async def signup(request: Request):
             token = new_session(t, uid, text(b.get("device"), 80))
     except sqlite3.IntegrityError:
         raise ApiError(409, "An account with this email already exists. Sign in instead.", "email_taken")
-    return {"ok": True, "token": token, "user": me_json(db.one("SELECT * FROM users WHERE id = ?", (uid,)))}
+    return {"ok": True, "token": token, "user": me_json(db.one("SELECT * FROM users WHERE id = ?", (uid,)), request)}
 
 
 @app.post("/v1/auth/login")
@@ -233,7 +261,7 @@ async def login(request: Request):
         raise ApiError(401, "Wrong email or password.", "bad_login")
     with db.tx() as t:
         token = new_session(t, row["id"], text(b.get("device"), 80))
-    return {"ok": True, "token": token, "user": me_json(row)}
+    return {"ok": True, "token": token, "user": me_json(row, request)}
 
 
 @app.post("/v1/auth/logout")
@@ -247,7 +275,7 @@ async def logout(request: Request):
 
 @app.get("/v1/me")
 async def me(request: Request):
-    return {"ok": True, "user": me_json(current_user(request))}
+    return {"ok": True, "user": me_json(current_user(request), request)}
 
 
 @app.post("/v1/me/delete")
@@ -272,7 +300,9 @@ async def ai_chat(request: Request):
     purpose = text(b.get("purpose"), 20) or "apply"
     s = db.settings()
     if not user["pro"] and purpose not in ("setup", "check"):
-        raise ApiError(403, "Auto apply isn't active on your account yet.", "not_active")
+        flavor, _ = app_info(request)
+        raise ApiError(403, "AI help isn't active on your account yet." if flavor == "play"
+                       else "Auto apply isn't active on your account yet.", "not_active")
     key = s.get("openrouter_key", "")
     if not key:
         raise ApiError(403, "The AI service is not set up yet. (Admin: add the OpenRouter key in the admin page.)",
@@ -308,6 +338,8 @@ async def report(request: Request):
     now = time.time()
     running = bool(b.get("running"))
     events = b.get("events") if isinstance(b.get("events"), list) else []
+    lines = b.get("log") if isinstance(b.get("log"), list) else []
+    flavor, code = app_info(request)
     s = db.settings()
     stop, reason = False, ""
     with db.tx() as t:
@@ -324,15 +356,17 @@ async def report(request: Request):
         if not running:
             stop_at = None
         t.execute("UPDATE users SET running = ?, mode = ?, status = ?, last_seen = ?, run_started_at = ?, "
-                  "stop_requested_at = ?, app_version = ?, device = ?, app_total = ? WHERE id = ?",
+                  "stop_requested_at = ?, app_version = ?, device = ?, app_total = ?, flavor = ?, version_code = ? "
+                  "WHERE id = ?",
                   (1 if running else 0, text(b.get("mode"), 10) or row["mode"], text(b.get("message"), 200), now,
                    run_started, stop_at, text(b.get("app_version"), 20) or row["app_version"],
                    text(b.get("device"), 80) or row["device"],
-                   int(number(b.get("applied_total"), 0, 10 ** 7, row["app_total"])), user["id"]))
+                   int(number(b.get("applied_total"), 0, 10 ** 7, row["app_total"])), flavor or row["flavor"],
+                   code or row["version_code"], user["id"]))
         for ev in events[:300]:
             if not isinstance(ev, dict) or ev.get("status") not in KEPT_STATUSES:
                 continue
-            job_id = text(ev.get("job_id"), 40)
+            job_id = text(ev.get("job_id"), 80)
             if not job_id:
                 continue
             at = number(ev.get("at"), 0, now + 600, now)
@@ -340,11 +374,27 @@ async def report(request: Request):
                 at = now
             score = ev.get("score")
             score = int(score) if isinstance(score, (int, float)) and 0 <= score <= 10 else None
-            t.execute("INSERT OR IGNORE INTO applications(user_id, job_id, title, company, status, score, at) "
-                      "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                      (user["id"], job_id, text(ev.get("title"), 200), text(ev.get("company"), 120), ev["status"], score, at))
-    return {"ok": True, "stop": stop, "reason": reason, "pro": bool(row["pro"]),
-            "max_per_day": db.setting_int(s, "max_per_day"), "every": REPORT_EVERY}
+            channel = ev.get("channel") if ev.get("channel") in CHANNELS else "auto"
+            stage = ev.get("stage") if ev.get("stage") in STAGES else ""
+            t.execute("INSERT INTO applications(user_id, job_id, title, company, status, score, at, channel, stage, reason, url) "
+                      "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(user_id, job_id, status) DO UPDATE SET "
+                      "stage = CASE WHEN excluded.stage != '' THEN excluded.stage ELSE applications.stage END, "
+                      "reason = CASE WHEN excluded.reason != '' THEN excluded.reason ELSE applications.reason END",
+                      (user["id"], job_id, text(ev.get("title"), 200), text(ev.get("company"), 120), ev["status"], score, at,
+                       channel, stage, text(ev.get("reason"), 300), text(ev.get("url"), 500)))
+        kept = 0
+        for line in lines[-400:]:
+            if isinstance(line, dict) and text(line.get("text"), 600):
+                at = number(line.get("at"), 0, now + 600, now)
+                t.execute("INSERT INTO events(user_id, at, text) VALUES (?, ?, ?)",
+                          (user["id"], at if abs(at - now) < 86400 * 3 else now, text(line.get("text"), 600)))
+                kept += 1
+        if kept:
+            t.execute("DELETE FROM events WHERE user_id = ? AND id <= (SELECT id FROM events WHERE user_id = ? "
+                      "ORDER BY id DESC LIMIT 1 OFFSET ?)", (user["id"], user["id"], EVENTS_KEPT))
+    day, hour = limits(row, s)
+    return {"ok": True, "stop": stop, "reason": reason, "pro": bool(row["pro"]), "max_per_day": day, "max_per_hour": hour,
+            "announcement": s.get("announcement", ""), "update": update_info(flavor, code, s), "every": REPORT_EVERY}
 
 
 # ---------------------------------------------------------------- admin
@@ -406,12 +456,20 @@ def settings_json():
     return {"has_key": bool(key), "key_hint": (key[:9] + "…" + key[-4:]) if len(key) > 16 else ("set" if key else ""),
             "model": s.get("model", ""), "free_ai_per_day": db.setting_int(s, "free_ai_per_day"),
             "pro_ai_per_day": db.setting_int(s, "pro_ai_per_day"), "max_per_day": db.setting_int(s, "max_per_day"),
-            "signups_open": s.get("signups_open") == "1", "new_users_pro": s.get("new_users_pro") == "1"}
+            "max_per_hour": db.setting_int(s, "max_per_hour"),
+            "signups_open": s.get("signups_open") == "1", "new_users_pro": s.get("new_users_pro") == "1",
+            "announcement": s.get("announcement", ""), "play_url": s.get("play_url", ""),
+            "min_version_github": db.setting_int(s, "min_version_github", 0, 10 ** 7),
+            "min_version_play": db.setting_int(s, "min_version_play", 0, 10 ** 7)}
 
 
 USER_SQL = """
 SELECT u.id, u.email, u.name, u.created_at, u.pro, u.pro_changed_at, u.note, u.running, u.mode, u.status, u.last_seen,
-  u.app_version, u.device, u.app_total, u.stop_requested_at, u.run_started_at,
+  u.app_version, u.device, u.app_total, u.stop_requested_at, u.run_started_at, u.max_per_day, u.max_per_hour,
+  u.flavor, u.version_code,
+  (SELECT e.text FROM events e WHERE e.user_id = u.id ORDER BY e.id DESC LIMIT 1) AS last_event,
+  (SELECT COUNT(*) FROM applications a WHERE a.user_id = u.id AND a.status = 'applied' AND a.channel != 'auto'
+     AND a.at >= :day0) AS helped_today,
   (SELECT COUNT(*) FROM applications a WHERE a.user_id = u.id AND a.status = 'applied' AND a.at >= :day0) AS applied_today,
   (SELECT COUNT(*) FROM applications a WHERE a.user_id = u.id AND a.status = 'applied' AND a.at >= :week0) AS applied_week,
   (SELECT COUNT(*) FROM applications a WHERE a.user_id = u.id AND a.status = 'applied') AS applied_total,
@@ -449,6 +507,13 @@ async def admin_overview(request: Request):
               "applied_week": sum(u["applied_week"] for u in users),
               "applied_total": sum(u["applied_total"] for u in users),
               "ai_today": sum(u["ai_today"] for u in users), "tokens_today": sum(u["tokens_today"] for u in users)}
+    versions = {}
+    for u in users:
+        if u["app_version"]:
+            k = (u["flavor"] or "?", u["app_version"], u["version_code"] or 0)
+            versions[k] = versions.get(k, 0) + 1
+    totals["versions"] = [{"flavor": k[0], "version": k[1], "code": k[2], "users": n}
+                          for k, n in sorted(versions.items(), key=lambda kv: -kv[0][2])]
     return {"ok": True, "now": now, "users": users, "totals": totals, "settings": settings_json()}
 
 
@@ -465,9 +530,11 @@ async def admin_user(uid: int, request: Request):
     require_admin(request)
     user = get_user(uid)
     apps = [dict(r) for r in db.all_rows(
-        "SELECT job_id, title, company, status, score, at FROM applications WHERE user_id = ? ORDER BY at DESC LIMIT 200", (uid,))]
+        "SELECT job_id, title, company, status, score, at, channel, stage, reason, url FROM applications WHERE user_id = ? "
+        "ORDER BY at DESC LIMIT 200", (uid,))]
     for a in apps:
-        a["url"] = f"https://www.linkedin.com/jobs/view/{a['job_id']}/" if a["job_id"].isdigit() else ""
+        if not a["url"] and a["job_id"].isdigit():
+            a["url"] = f"https://www.linkedin.com/jobs/view/{a['job_id']}/"
     days = [dict(r) for r in db.all_rows(
         "SELECT day, calls, tokens FROM ai_usage WHERE user_id = ? ORDER BY day DESC LIMIT 14", (uid,))]
     return {"ok": True, "user": user, "applications": apps, "ai_days": days}
@@ -486,7 +553,24 @@ async def admin_update_user(uid: int, request: Request):
         with db.tx() as t:
             t.execute("UPDATE users SET pw_hash = ? WHERE id = ?", (pw_hash, uid))
             t.execute("DELETE FROM tokens WHERE user_id = ?", (uid,))   # sign out everywhere with the old password
+    caps = {}
+    for k, high in (("max_per_day", 300), ("max_per_hour", 30)):
+        if k in b:
+            v = b.get(k)
+            if v is None or str(v).strip() == "":
+                caps[k] = None     # back to the global setting
+            else:
+                try:
+                    caps[k] = int(float(v))
+                except (TypeError, ValueError):
+                    raise ApiError(400, "Limits must be numbers.", "bad_number")
+                if not 0 <= caps[k] <= high:
+                    raise ApiError(400, f"{k} must be between 0 and {high}.", "bad_number")
     with db.tx() as t:
+        for k, v in caps.items():
+            t.execute(f"UPDATE users SET {k} = ? WHERE id = ?", (v, uid))
+        if b.get("revoke_sessions"):
+            t.execute("DELETE FROM tokens WHERE user_id = ?", (uid,))
         if "pro" in b:
             t.execute("UPDATE users SET pro = ?, pro_changed_at = ? WHERE id = ?", (1 if b.get("pro") else 0, time.time(), uid))
         if "note" in b:
@@ -514,6 +598,22 @@ async def admin_delete(uid: int, request: Request):
     return {"ok": True}
 
 
+@app.get("/admin/api/activity")
+async def admin_activity(request: Request, user: int = 0, after: int = 0, limit: int = 200):
+    """What the apps are doing, newest last: one user's lines, or everyone's."""
+    require_admin(request)
+    limit = max(1, min(500, limit))
+    where, args = ["e.id > ?"], [after]
+    if user:
+        where.append("e.user_id = ?")
+        args.append(user)
+    rows = db.all_rows("SELECT e.id, e.at, e.text, e.user_id, u.email FROM events e JOIN users u ON u.id = e.user_id "
+                       f"WHERE {' AND '.join(where)} ORDER BY e.id DESC LIMIT ?", (*args, limit))
+    events = [dict(r) for r in reversed(rows)]
+    last = events[-1]["id"] if events else after
+    return {"ok": True, "events": events, "last_id": last}
+
+
 @app.post("/admin/api/stop-all")
 async def admin_stop_all(request: Request):
     require_admin(request, write=True)
@@ -531,7 +631,8 @@ async def admin_settings(request: Request):
 
 
 MODEL_RE = re.compile(r"^[A-Za-z0-9._:/\-]{3,120}$")
-INT_SETTINGS = {"free_ai_per_day": (0, 5000), "pro_ai_per_day": (1, 50000), "max_per_day": (0, 300)}
+INT_SETTINGS = {"free_ai_per_day": (0, 5000), "pro_ai_per_day": (1, 50000), "max_per_day": (0, 300), "max_per_hour": (0, 30),
+                "min_version_github": (0, 10 ** 7), "min_version_play": (0, 10 ** 7)}
 
 
 @app.post("/admin/api/settings")
@@ -563,6 +664,13 @@ async def admin_save_settings(request: Request):
     for k in ("signups_open", "new_users_pro"):
         if k in b:
             changes[k] = "1" if b[k] else "0"
+    if "announcement" in b:
+        changes["announcement"] = text(b.get("announcement"), 300)
+    if "play_url" in b:
+        url = text(b.get("play_url"), 300)
+        if url and not url.startswith("https://"):
+            raise ApiError(400, "The Google Play link must start with https://", "bad_url")
+        changes["play_url"] = url
     with db.tx() as t:
         for k, v in changes.items():
             t.execute("INSERT INTO settings(key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", (k, v))

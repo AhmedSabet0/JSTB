@@ -11,7 +11,8 @@ import android.provider.OpenableColumns;
 import java.io.File;
 import java.io.FileNotFoundException;
 
-/** Lets other apps (WhatsApp, Gmail, Drive...) read the files you share: the CSV, the log and debug.zip. */
+/** Lets other apps (WhatsApp, Gmail, Drive...) read the files you share: the CSV, the log and debug.zip. Also gives
+ *  your CV to a company's site you opened in the app, when you attach it to an application (cv/your-name.pdf). */
 public final class FilesProvider extends ContentProvider {
     static final String AUTHORITY = "com.autoapply.bot.files";
 
@@ -19,7 +20,28 @@ public final class FilesProvider extends ContentProvider {
         return Uri.parse("content://" + AUTHORITY + "/" + Uri.encode(f.getName()));
     }
 
+    /** Your CV under the name you gave it (the site sees that name). */
+    static Uri uriForCv(String displayName) {
+        String n = displayName == null ? "" : displayName.replaceAll("[\\\\/:*?\"<>|\\s]+", "_");
+        if (n.replace("_", "").isEmpty()) {
+            n = "CV.pdf";
+        }
+        return Uri.parse("content://" + AUTHORITY + "/cv/" + Uri.encode(n));
+    }
+
+    private static boolean isCv(Uri uri) {
+        java.util.List<String> seg = uri.getPathSegments();
+        return seg.size() == 2 && "cv".equals(seg.get(0));
+    }
+
     private File fileFor(Uri uri) throws FileNotFoundException {
+        if (isCv(uri)) {
+            File cv = AndroidPlatform.get(getContext()).engine.config.cvFile(AndroidPlatform.get(getContext()).engine.config.load());
+            if (cv == null || !cv.isFile()) {
+                throw new FileNotFoundException("No CV");
+            }
+            return cv;
+        }
         String name = uri.getLastPathSegment();
         if (name == null || !name.matches("[A-Za-z0-9._-]+")) {
             throw new FileNotFoundException("Bad name");
@@ -46,7 +68,7 @@ public final class FilesProvider extends ContentProvider {
         MatrixCursor c = new MatrixCursor(new String[]{OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE});
         try {
             File f = fileFor(uri);
-            c.addRow(new Object[]{f.getName(), f.length()});
+            c.addRow(new Object[]{isCv(uri) ? uri.getLastPathSegment() : f.getName(), f.length()});
         } catch (FileNotFoundException e) {
             // empty result
         }
@@ -56,6 +78,9 @@ public final class FilesProvider extends ContentProvider {
     @Override
     public String getType(Uri uri) {
         String n = String.valueOf(uri.getLastPathSegment());
+        if (n.toLowerCase(java.util.Locale.ROOT).endsWith(".pdf")) {
+            return "application/pdf";
+        }
         if (n.endsWith(".csv")) {
             return "text/csv";
         }

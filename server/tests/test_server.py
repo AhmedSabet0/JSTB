@@ -87,6 +87,8 @@ def main_test():
         msgs = [{"role": "user", "content": "hi"}]
         r = c.post("/v1/ai/chat", headers=auth(tok), json={"messages": msgs, "purpose": "apply"})
         check("not Pro: applying refused", r.status_code == 403 and err(r) == "not_active", r.text)
+        r = c.post("/v1/ai/chat", headers={**auth(tok), "X-App-Flavor": "play"}, json={"messages": msgs, "purpose": "apply"})
+        check("not Pro, Google Play build: said as AI help", r.status_code == 403 and "AI help" in r.text, r.text)
         r = c.post("/v1/ai/chat", headers=auth(tok), json={"messages": msgs, "purpose": "setup"})
         check("no key on the server yet", r.status_code == 403 and err(r) == "ai_not_configured", r.text)
         check("bad AI request", c.post("/v1/ai/chat", headers=auth(tok), json={"messages": "x"}).status_code == 400)
@@ -203,6 +205,46 @@ def main_test():
         c.post("/admin/api/settings", headers=A, json={"signups_open": True, "new_users_pro": True})
         r = c.post("/v1/auth/signup", json={"email": "tester@example.com", "password": "tester-pass"})
         check("testers start with Pro", r.json()["user"]["pro"] is True)
+        print("\n== 3.0: activity, limits, updates, tracker")
+        tk = c.post("/v1/auth/signup", json={"email": "act@example.com", "password": "act-pass-123"}).json()["token"]
+        H = {**auth(tk), "X-App-Flavor": "play", "X-App-Version": "105"}
+        c.post("/admin/api/settings", headers=A, json={"announcement": "Server maintenance at 10 pm", "min_version_play": 110,
+                                                        "max_per_hour": 9})
+        me = c.get("/v1/me", headers=H).json()["user"]
+        check("announcement and forced update reach the app", me["announcement"].startswith("Server maintenance")
+              and me["update"]["required"] is True and me["update"]["play_url"].startswith("https://play.google.com/"), me)
+        me2 = c.get("/v1/me", headers={**auth(tk), "X-App-Flavor": "github", "X-App-Version": "105"}).json()["user"]
+        check("the other build is not forced", me2["update"]["required"] is False)
+        uid2 = [u for u in c.get("/admin/api/overview").json()["users"] if u["email"] == "act@example.com"][0]["id"]
+        c.post(f"/admin/api/users/{uid2}", headers=A, json={"max_per_day": 12, "max_per_hour": ""})
+        me = c.get("/v1/me", headers=H).json()["user"]
+        check("per-user daily cap beats the global one; hourly falls back to global", me["max_per_day"] == 12
+              and me["max_per_hour"] == 9, me)
+        log = [{"at": time.time(), "text": f"line {i}"} for i in range(5)]
+        ev = [{"job_id": "c-acme-1", "title": "NOC Engineer", "company": "Acme", "status": "applied", "channel": "company",
+               "url": "https://jobs.acme.com/1"}]
+        r = c.post("/v1/report", headers=H, json={"running": False, "log": log, "events": ev, "app_version": "3.0"})
+        check("report answers with limits, announcement and update", r.json()["max_per_day"] == 12
+              and r.json()["update"]["required"] is True and r.json()["announcement"] != "", r.json())
+        c.post("/v1/report", headers=H, json={"running": False, "events": [{**ev[0], "stage": "interview"}]})
+        d = c.get(f"/admin/api/users/{uid2}").json()
+        a0 = d["applications"][0] if d["applications"] else {}
+        check("tracker: channel, link and stage kept, stage updated in place", a0.get("channel") == "company"
+              and a0.get("stage") == "interview" and a0.get("url") == "https://jobs.acme.com/1" and len(d["applications"]) == 1, a0)
+        act = c.get(f"/admin/api/activity?user={uid2}").json()
+        check("activity lines of the user, oldest first", [e["text"] for e in act["events"]] == [f"line {i}" for i in range(5)]
+              and act["events"][0]["email"] == "act@example.com", act)
+        check("activity: only lines after an id", c.get(f"/admin/api/activity?after={act['last_id']}").json()["events"] == [])
+        ov = c.get("/admin/api/overview").json()
+        u2 = [u for u in ov["users"] if u["id"] == uid2][0]
+        check("overview: build, version, last line, helped today, versions in use", u2["flavor"] == "play"
+              and u2["version_code"] == 105 and u2["last_event"] == "line 4" and u2["helped_today"] == 1
+              and any(v["flavor"] == "play" and v["code"] == 105 for v in ov["totals"]["versions"]), u2)
+        c.post(f"/admin/api/users/{uid2}", headers=A, json={"revoke_sessions": True})
+        check("sign out everywhere", c.get("/v1/me", headers=H).status_code == 401)
+        check("a Google Play link must be https", c.post("/admin/api/settings", headers=A, json={"play_url": "http://x"}).status_code == 400)
+        check("privacy policy mentions the activity log", "activity log" in c.get("/privacy").text)
+
         c.post("/admin/api/logout", headers=A)
         check("admin sign out", c.get("/admin/api/overview").status_code == 401)
 
@@ -211,5 +253,34 @@ def main_test():
     return ok == len(results)
 
 
+def migration_test():
+    """A 2.0 database gets the 3.0 columns and tables on start."""
+    import sqlite3
+    import subprocess
+    old = os.path.join(TMP, "old.db")
+    c = sqlite3.connect(old)
+    c.executescript("""CREATE TABLE users (id INTEGER PRIMARY KEY AUTOINCREMENT, email TEXT NOT NULL UNIQUE, name TEXT NOT NULL DEFAULT '',
+      pw_hash TEXT NOT NULL, created_at REAL NOT NULL, pro INTEGER NOT NULL DEFAULT 0, pro_changed_at REAL, note TEXT NOT NULL DEFAULT '',
+      stop_requested_at REAL, running INTEGER NOT NULL DEFAULT 0, mode TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT '',
+      run_started_at REAL, last_seen REAL, app_version TEXT NOT NULL DEFAULT '', device TEXT NOT NULL DEFAULT '',
+      app_total INTEGER NOT NULL DEFAULT 0);
+    CREATE TABLE applications (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, job_id TEXT NOT NULL,
+      title TEXT NOT NULL DEFAULT '', company TEXT NOT NULL DEFAULT '', status TEXT NOT NULL, score INTEGER, at REAL NOT NULL,
+      UNIQUE (user_id, job_id, status));
+    INSERT INTO users(email, pw_hash, created_at) VALUES ('old@example.com', 'x', 1);""")
+    c.commit()
+    c.close()
+    code = ("import sqlite3; from app import db; db.init(); c = sqlite3.connect(db.DB_PATH); "
+            "u = [r[1] for r in c.execute('PRAGMA table_info(users)')]; a = [r[1] for r in c.execute('PRAGMA table_info(applications)')]; "
+            "n = c.execute('SELECT COUNT(*) FROM users').fetchone()[0]; "
+            "print('max_per_day' in u and 'version_code' in u and 'channel' in a and 'stage' in a and n == 1)")
+    out = subprocess.run([sys.executable, "-c", code], env={**os.environ, "DB_PATH": old}, capture_output=True, text=True,
+                         cwd=os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+    check("a 2.0 database is upgraded on start (users kept)", out.stdout.strip() == "True", out.stdout + out.stderr)
+
+
 if __name__ == "__main__":
-    sys.exit(0 if main_test() else 1)
+    good = main_test()
+    print("\n== Upgrading a 2.0 database")
+    migration_test()
+    sys.exit(0 if good and all(results) else 1)

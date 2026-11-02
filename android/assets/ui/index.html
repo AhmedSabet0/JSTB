@@ -6,7 +6,7 @@
 <title>Auto Apply</title>
 <link rel="stylesheet" href="/ui/app.css">
 </head>
-<body>
+<body class="no-auto">
 <header class="appbar">
   <button id="nav-back" class="icon-btn" type="button" aria-label="Back" hidden>
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15.4 5.4 14 4l-8 8 8 8 1.4-1.4L8.8 12z"/></svg></button>
@@ -28,14 +28,16 @@
 
     <div class="step" data-step="welcome">
       <svg class="hero-mark" viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="16"/><path d="M15 31 49 16 38 49 31 37z"/></svg>
-      <h1>Apply to jobs while you live your life</h1>
-      <p class="lead">Answer a few questions once. Then the app applies to LinkedIn Easy Apply jobs that fit your CV, in the background, and tells you what it sent.</p>
+      <h1 data-noauto>Send more applications, with less typing</h1>
+      <h1 data-auto>Apply to jobs while you live your life</h1>
+      <p class="lead" data-noauto>Collect jobs from LinkedIn or any site in one list. The app fills the forms with your answers and writes cover letters. You check each one and send it.</p>
+      <p class="lead" data-auto>Answer a few questions once. Then the app applies to LinkedIn Easy Apply jobs that fit your CV, in the background, and tells you what it sent. Jobs you share to it get help too.</p>
       <ul class="plain-list">
-        <li><span><b>Create your account</b> (it connects the AI that reads jobs and fills forms)</span></li>
+        <li><span><b>Create your account</b> (it connects the AI that reads jobs and forms)</span></li>
         <li><span><b>Add your CV</b></span></li>
         <li><span><b>Answer the questions forms ask most</b>, like your expected salary</span></li>
         <li><span><b>Pick the jobs</b> to look for</span></li>
-        <li><span><b>Sign in to LinkedIn</b></span></li>
+        <li data-auto><span><b>Sign in to LinkedIn</b></span></li>
       </ul>
       <p class="muted">Takes about 3 minutes.</p>
     </div>
@@ -71,7 +73,7 @@
 
     <div class="step" data-step="cv">
       <h1>Add your CV</h1>
-      <p class="lead">A PDF with real text (not a scanned photo). The AI uses it to choose jobs and answer questions.</p>
+      <p class="lead">A PDF with real text (not a scanned photo). The AI uses it to choose jobs and answer questions, and the app attaches it to applications for you.</p>
       <label class="drop" for="w-cv-file">
         <input id="w-cv-file" class="cv-input" type="file" accept=".pdf,.txt,application/pdf,text/plain">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 2h8l6 6v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2zm7 1.5V9h5.5zM12 11l-4 4h3v4h2v-4h3z"/></svg>
@@ -82,14 +84,14 @@
 
     <div class="step" data-step="answers">
       <h1>Answers forms ask for</h1>
-      <p class="lead">Most Easy Apply forms ask these. Answer once and the app fills them in every form.</p>
+      <p class="lead">Most application forms ask these. Answer once and the app uses them in every form.</p>
       <p id="w-sug-state" class="note" hidden></p>
       <div id="w-answers" class="pform"></div>
     </div>
 
     <div class="step" data-step="jobs">
       <h1>Which jobs?</h1>
-      <p class="lead">Job titles to search for on LinkedIn. The app applies only where the job fits your CV.</p>
+      <p class="lead">Job titles you are looking for. The app turns them into searches you open with one tap.</p>
       <div class="field">
         <span class="label">Job titles</span>
         <div id="w-titles" class="title-chips"></div>
@@ -118,20 +120,43 @@
     <div class="step" data-step="done">
       <svg class="hero-mark good" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 16.2 4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4z"/></svg>
       <h1>All set</h1>
-      <p class="lead">One more thing so it keeps working with the screen off:</p>
-      <div class="perm-list">
-        <div class="perm"><div><b>Notifications</b><small>For questions only you can answer, and the summary at the end.</small></div>
-          <button class="btn" data-perm="notifications" type="button">Allow</button><span class="ok-tag" data-perm-ok="notifications" hidden>On</span></div>
-        <div class="perm"><div><b>Run in the background</b><small>So Android does not stop the app when the screen is off.</small></div>
-          <button class="btn" data-perm="battery" type="button">Allow</button><span class="ok-tag" data-perm-ok="battery" hidden>On</span></div>
-        <div class="perm maker-row" hidden><div><b>Autostart</b><small class="maker-text"></small></div>
-          <button class="btn" data-perm="app" type="button">Open</button></div>
+      <div data-noauto>
+        <p class="lead">This is how you apply with the app:</p>
+        <ol class="how">
+          <li><b>Find a job</b><span>Open a search from the Home screen, on LinkedIn or another site.</span></li>
+          <li><b>Share it to Auto Apply</b><span>Tap Share on the job and pick Auto Apply. It joins your list.</span></li>
+          <li><b>Apply with the app's help</b><span>On company sites the app fills the form and attaches your CV. On LinkedIn, copy your answers with one tap.</span></li>
+          <li><b>Send it, then tap I applied</b><span>The Applied tab keeps every application and where it got to.</span></li>
+        </ol>
+      </div>
+      <div data-auto>
+        <p class="lead">One more thing so it keeps working with the screen off:</p>
+        <div class="perm-list">
+          <div class="perm"><div><b>Notifications</b><small>For questions only you can answer, and the summary at the end.</small></div>
+            <button class="btn" data-perm="notifications" type="button">Allow</button><span class="ok-tag" data-perm-ok="notifications" hidden>On</span></div>
+          <div class="perm"><div><b>Run in the background</b><small>So Android does not stop the app when the screen is off.</small></div>
+            <button class="btn" data-perm="battery" type="button">Allow</button><span class="ok-tag" data-perm-ok="battery" hidden>On</span></div>
+          <div class="perm maker-row" hidden><div><b>Autostart</b><small class="maker-text"></small></div>
+            <button class="btn" data-perm="app" type="button">Open</button></div>
+        </div>
       </div>
     </div>
 
     <div class="wizard-bar">
       <button id="w-back" class="btn" type="button">Back</button>
       <button id="w-next" class="btn primary" type="button">Continue</button>
+    </div>
+  </section>
+
+  <!-- ============================================================ UPDATE NEEDED -->
+  <section id="v-update" class="view" hidden>
+    <div class="upd">
+      <svg class="upd-mark" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4V1L8 5l4 4V6a6 6 0 0 1 5.66 8l1.46 1.46A8 8 0 0 0 12 4zm0 14a6 6 0 0 1-5.66-8L4.88 8.54A8 8 0 0 0 12 20v3l4-4-4-4v3z"/></svg>
+      <h1>Update Auto Apply</h1>
+      <p class="lead">This version is too old to keep working with the server. The update keeps your jobs, your answers and your CV.</p>
+      <button id="force-update" class="btn primary huge" type="button">Update now</button>
+      <p id="force-status" class="hint" aria-live="polite"></p>
+      <div id="force-meter-wrap" class="meter" hidden><i id="force-meter"></i></div>
     </div>
   </section>
 
@@ -161,9 +186,16 @@
       <p id="q-err" class="error-msg" hidden></p>
     </div>
 
+    <div id="announce" class="announce" hidden>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 11v2h4v-2h-4zm-2 6.6 3.2 2.4 1.2-1.6-3.2-2.4-1.2 1.6zM20.4 5.6 19.2 4 16 6.4l1.2 1.6 3.2-2.4zM4 9a2 2 0 0 0-2 2v2a2 2 0 0 0 2 2h1v4h2v-4h1l5 3V6L8 9H4zm11.5 3c0-1.33-.58-2.53-1.5-3.35v6.7c.92-.82 1.5-2.02 1.5-3.35z"/></svg>
+      <p id="announce-text"></p>
+      <button id="announce-x" class="icon-btn" type="button" aria-label="Dismiss">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 6.4 17.6 5 12 10.6 6.4 5 5 6.4 10.6 12 5 17.6 6.4 19l5.6-5.6 5.6 5.6 1.4-1.4-5.6-5.6z"/></svg></button>
+    </div>
+
     <div id="banners"></div>
 
-    <div class="hero" id="hero">
+    <div class="hero" id="hero" data-auto>
       <div class="ring-wrap">
         <svg class="ring" viewBox="0 0 120 120" aria-hidden="true">
           <circle class="ring-track" cx="60" cy="60" r="52"/>
@@ -184,14 +216,53 @@
       </div>
     </div>
 
-    <div class="totals">
+    <div class="totals" data-auto>
       <div><b id="k-sess">0</b><span id="k-sess-label">this session</span></div>
       <div><b id="k-week">0</b><span>last 7 days</span></div>
       <div><b id="k-total">0</b><span>all time</span></div>
     </div>
 
-    <section class="panel">
-      <div class="panel-head"><h2 id="brief-title">This session</h2><button class="linklike" data-go="jobs" type="button">All jobs</button></div>
+    <section class="desk" id="next-card" aria-labelledby="next-label">
+      <div class="desk-top">
+        <span id="next-label" class="desk-label">Next up</span>
+        <span class="desk-goal"><b id="goal-today">0</b> of <span id="goal-of">10</span> today</span>
+      </div>
+      <div class="desk-meter" aria-hidden="true"><i id="goal-meter"></i></div>
+      <div id="next-job" class="desk-job" hidden>
+        <h2 id="next-title"></h2>
+        <p id="next-co"></p>
+        <div id="next-tags" class="tags"></div>
+      </div>
+      <div id="next-empty" class="desk-job">
+        <h2>Your list is empty</h2>
+        <p>Open a search below. On a job you like, tap Share and pick Auto Apply.</p>
+      </div>
+      <div id="next-actions" class="desk-actions" hidden>
+        <button id="next-apply" class="btn desk-btn" type="button">Apply now</button>
+        <button id="next-more" class="btn desk-ghost" type="button"><span id="next-more-n"></span></button>
+      </div>
+    </section>
+
+    <section class="panel" id="find-panel">
+      <div class="panel-head"><h2>Find jobs</h2><button class="linklike" data-go="profile" type="button">Edit titles</button></div>
+      <div id="find-links" class="find-links"></div>
+      <p id="find-none" class="hint" hidden>Add the job titles you are looking for in Profile.</p>
+      <div class="find-sites" id="find-sites"></div>
+      <p class="hint">On a job you like, tap <b>Share</b> and pick <b>Auto Apply</b>. Or paste its link:</p>
+      <div class="row paste">
+        <input id="home-link" type="url" inputmode="url" placeholder="Paste a job link" autocomplete="off" spellcheck="false">
+        <button id="home-link-btn" class="btn" type="button">Add</button>
+      </div>
+    </section>
+
+    <div class="totals" id="c-totals" data-noauto>
+      <button type="button" data-go="tracker"><b id="c-week">0</b><span>applied this week</span></button>
+      <button type="button" data-go="tracker"><b id="c-interviews">0</b><span>interviews</span></button>
+      <button type="button" data-go="tracker"><b id="c-total">0</b><span>all time</span></button>
+    </div>
+
+    <section class="panel" data-auto>
+      <div class="panel-head"><h2 id="brief-title">This session</h2><button class="linklike" data-go="jobs" type="button">Auto apply history</button></div>
       <p id="brief-time" class="muted small brief-time"></p>
       <div id="brief"></div>
     </section>
@@ -201,17 +272,71 @@
       <ul id="recent" class="job-list"></ul>
     </section>
 
-    <button class="btn wide ghost" data-go="log" type="button">What is it doing? See the activity</button>
+    <button class="btn wide ghost" data-go="log" type="button" data-auto>What is it doing? See the activity</button>
   </section>
 
-  <!-- ============================================================ SETTINGS -->
-  <section id="v-settings" class="view" hidden>
-    <p id="settings-running" class="note" hidden>The app is applying right now. Your answers count from the next question; other changes from the next start.</p>
+  <!-- ============================================================ JOBS (to apply) -->
+  <section id="v-queue" class="view" hidden>
+    <div class="row paste">
+      <input id="queue-link" type="url" inputmode="url" placeholder="Paste a job link" autocomplete="off" spellcheck="false">
+      <button id="queue-link-btn" class="btn primary" type="button">Add</button>
+    </div>
+    <div class="filter-tabs" role="tablist" aria-label="Show">
+      <button type="button" role="tab" data-qf="new" class="on">To apply <b id="qf-new"></b></button>
+      <button type="button" role="tab" data-qf="skipped">Skipped <b id="qf-skipped"></b></button>
+    </div>
+    <ul id="queue-list" class="cards"></ul>
+    <div id="queue-empty" class="empty-state" hidden>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 16v-1H3v4a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-4h-7v1h-4zm10-9h-4V5l-2-2h-4L8 5v2H4a2 2 0 0 0-2 2v3a2 2 0 0 0 2 2h6v-2h4v2h6a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2zm-6 0h-4V5h4v2z"/></svg>
+      <b id="queue-empty-title">No jobs waiting</b>
+      <span id="queue-empty-text">Find jobs from the Home screen. On a job you like, tap Share and pick Auto Apply.</span>
+      <button class="btn primary" data-go="home" type="button">Find jobs</button>
+    </div>
+  </section>
+
+  <!-- ============================================================ APPLIED (tracker) -->
+  <section id="v-tracker" class="view" hidden>
+    <div class="pipeline" id="tr-stages" role="tablist" aria-label="Stage">
+      <button type="button" data-st="" class="on"><b id="tr-n-all">0</b><span>All</span></button>
+      <button type="button" data-st="applied"><b id="tr-n-applied">0</b><span>Applied</span></button>
+      <button type="button" data-st="interview"><b id="tr-n-interview">0</b><span>Interview</span></button>
+      <button type="button" data-st="offer"><b id="tr-n-offer">0</b><span>Offer</span></button>
+      <button type="button" data-st="rejected"><b id="tr-n-rejected">0</b><span>Rejected</span></button>
+    </div>
+    <input id="tr-q" type="search" placeholder="Search title or company" aria-label="Search applications">
+    <p id="tr-count" class="muted small"></p>
+    <ul id="tr-list" class="cards"></ul>
+    <div id="tr-empty" class="empty-state" hidden>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm-2 15-5-5 1.4-1.4 3.6 3.6 7.6-7.6L19 8l-9 9z"/></svg>
+      <b>Nothing sent yet</b>
+      <span>Every job you apply to shows up here. Change its stage when the company answers.</span>
+    </div>
+    <button class="btn wide ghost" data-share="csv" type="button">Share the list (CSV)</button>
+  </section>
+
+  <!-- ============================================================ PROFILE -->
+  <section id="v-profile" class="view" hidden>
+    <div class="me">
+      <span id="me-initial" class="me-initial" aria-hidden="true"></span>
+      <div class="me-text"><b id="me-name"></b><span id="me-email"></span></div>
+      <span id="me-state" class="tag"></span>
+    </div>
 
     <section class="panel menu">
       <button class="menu-row" data-go="info" type="button"><span>Your info<small id="info-sub">What forms ask about you, by category</small></span><b id="open-badge" class="count" hidden></b></button>
-      <button class="menu-row" data-go="jobs" type="button"><span>All jobs<small>Applied, skipped and why</small></span></button>
-      <button class="menu-row" data-go="log" type="button"><span>Activity<small>Step by step, as it works</small></span></button>
+      <button class="menu-row" data-go="log" type="button"><span>Activity<small>What the app did, step by step</small></span></button>
+      <button class="menu-row" data-go="jobs" type="button" data-auto><span>Auto apply history<small>Applied, skipped and why</small></span></button>
+      <button class="menu-row" data-go="settings" type="button"><span>Settings<small>Account, updates, help</small></span></button>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head"><h2>Your CV</h2></div>
+      <label class="drop small-drop" for="s-cv-file">
+        <input id="s-cv-file" class="cv-input" type="file" accept=".pdf,.txt,application/pdf,text/plain">
+        <b class="cv-title">Replace your CV</b>
+        <span class="cv-state muted"></span>
+      </label>
+      <details id="cv-preview-box" hidden><summary>Text the AI reads from your CV</summary><pre id="cv-preview"></pre></details>
     </section>
 
     <section class="panel">
@@ -252,9 +377,22 @@
       </div>
       <button class="btn primary wide save-settings" type="button">Save</button>
     </section>
+  </section>
+
+  <!-- ============================================================ SETTINGS -->
+  <section id="v-settings" class="view" hidden>
+    <p id="settings-running" class="note" hidden>The app is applying right now. Your answers count from the next question; other changes from the next start.</p>
 
     <section class="panel">
-      <div class="panel-head"><h2>How it applies</h2></div>
+      <div class="panel-head"><h2>Your pace</h2></div>
+      <div class="field"><label for="s-DAILY_GOAL">Applications a day I aim for</label>
+        <input id="s-DAILY_GOAL" type="number" inputmode="numeric" min="1" max="200">
+        <p class="hint">The Home screen shows how far you got today.</p></div>
+      <button class="btn primary wide save-settings" type="button">Save</button>
+    </section>
+
+    <section class="panel" data-auto>
+      <div class="panel-head"><h2>How auto apply works</h2></div>
       <div class="field">
         <span class="label">A question your answers do not cover</span>
         <div class="choice-list">
@@ -276,20 +414,15 @@
         <textarea id="s-SKIP_COMPANIES" rows="2"></textarea></div>
       <div class="field"><label for="s-SKIP_TITLE_WORDS">Skip job titles with these words <span class="muted small">(one per line)</span></label>
         <textarea id="s-SKIP_TITLE_WORDS" rows="2" placeholder="sales&#10;intern"></textarea></div>
-      <div class="field"><label for="s-ABOUT_ME">Anything else the AI should know <span class="muted small">(optional)</span></label>
-        <textarea id="s-ABOUT_ME" rows="4" spellcheck="false" placeholder="Years of experience with Fortinet: 2"></textarea>
-        <p class="hint">One fact per line, for questions your CV and answers do not cover.</p></div>
       <button class="btn primary wide save-settings" type="button">Save</button>
     </section>
 
     <section class="panel">
-      <div class="panel-head"><h2>Your CV</h2></div>
-      <label class="drop small-drop" for="s-cv-file">
-        <input id="s-cv-file" class="cv-input" type="file" accept=".pdf,.txt,application/pdf,text/plain">
-        <b class="cv-title">Replace your CV</b>
-        <span class="cv-state muted"></span>
-      </label>
-      <details id="cv-preview-box" hidden><summary>Text the AI reads from your CV</summary><pre id="cv-preview"></pre></details>
+      <div class="panel-head"><h2>For the AI</h2></div>
+      <div class="field"><label for="s-ABOUT_ME">Anything else it should know <span class="muted small">(optional)</span></label>
+        <textarea id="s-ABOUT_ME" rows="4" spellcheck="false" placeholder="Years of experience with Fortinet: 2"></textarea>
+        <p class="hint">One fact per line, for questions your CV and answers do not cover.</p></div>
+      <button class="btn primary wide save-settings" type="button">Save</button>
     </section>
 
     <section class="panel" id="account-card">
@@ -309,7 +442,7 @@
       </details>
       <details id="acc-del-box" class="acc-more danger-zone">
         <summary>Delete account</summary>
-        <p class="hint">Deletes your account and what the app reported to the server (the jobs it applied to, AI use), right away.
+        <p class="hint">Deletes your account and what the app reported to the server (your activity and the jobs you applied to), right away.
           Your CV and answers stay on this phone until you uninstall the app.</p>
         <div class="field"><label for="acc-del-pw">Your password</label>
           <input id="acc-del-pw" type="password" autocomplete="current-password"></div>
@@ -317,12 +450,10 @@
       </details>
     </section>
 
-    <section class="panel">
+    <section class="panel" data-auto>
       <div class="panel-head"><h2>LinkedIn</h2><span id="li-state" class="muted small"></span></div>
       <button class="btn wide" data-signin type="button">Sign in to LinkedIn again</button>
     </section>
-
-
 
     <section class="panel" id="update-card">
       <div class="panel-head"><h2>App updates</h2><span id="app-version" class="muted small"></span></div>
@@ -339,18 +470,19 @@
       <div class="field update-source">
         <label for="s-UPDATE_SOURCE">Update source</label>
         <input id="s-UPDATE_SOURCE" type="text" spellcheck="false" placeholder="AhmedSabet0/JSTB">
-        <p class="hint">A GitHub repo (owner/name) or a link to latest.json. Updates keep your answers, settings and LinkedIn sign-in.</p>
+        <p class="hint">A GitHub repo (owner/name) or a link to latest.json. Updates keep your answers, settings and sign-ins.</p>
       </div>
     </section>
 
     <section class="panel">
       <div class="panel-head"><h2>Help</h2></div>
-      <p class="hint">Something went wrong? Share these with whoever helps you. debug.zip holds the LinkedIn pages where the app got stuck, so share it privately.</p>
+      <p class="hint" data-auto>Something went wrong? Share these with whoever helps you. debug.zip holds the LinkedIn pages where the app got stuck, so share it privately.</p>
+      <p class="hint" data-noauto>Something went wrong? Share the log with whoever helps you.</p>
       <p class="hint"><span id="help-version"></span> <a id="privacy-link" href="#" target="_blank" rel="noopener" hidden>Privacy policy</a></p>
       <div class="row wrap">
         <button class="btn" data-share="log" type="button">Share the log</button>
-        <button class="btn" data-share="debug" type="button">Share debug.zip</button>
-        <button class="btn" data-share="csv" type="button">Share applied jobs (CSV)</button>
+        <button class="btn" data-share="debug" type="button" data-auto>Share debug.zip</button>
+        <button class="btn" data-share="csv" type="button">Share applications (CSV)</button>
       </div>
     </section>
     <button id="btn-rerun" class="btn wide ghost" type="button">Run the setup again</button>
@@ -377,7 +509,7 @@
     <p id="info-empty" class="empty" hidden>Nothing matches your search.</p>
   </section>
 
-  <!-- ============================================================ JOBS -->
+  <!-- ============================================================ AUTO APPLY HISTORY -->
   <section id="v-jobs" class="view" hidden>
     <div id="jobs-retry" class="banner" hidden>
       <div><b id="jobs-retry-title"></b><span>Found again in the search, they are tried once more. Jobs that are no longer posted are left out.</span></div>
@@ -404,6 +536,97 @@
     <div id="log" class="log" aria-live="off"></div>
   </section>
 </main>
+
+<nav class="tabbar" id="tabbar" aria-label="Main" hidden>
+  <button type="button" data-tab="home" class="on">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg><span>Home</span></button>
+  <button type="button" data-tab="queue">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 16v-1H3v4a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-4h-7v1h-4zm10-9h-4V5l-2-2h-4L8 5v2H4a2 2 0 0 0-2 2v3a2 2 0 0 0 2 2h6v-2h4v2h6a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2zm-6 0h-4V5h4v2z"/></svg><span>Jobs</span><b id="tab-queue-n" class="tab-badge" hidden></b></button>
+  <button type="button" data-tab="tracker">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm-2 15-5-5 1.4-1.4 3.6 3.6 7.6-7.6L19 8l-9 9z"/></svg><span>Applied</span></button>
+  <button type="button" data-tab="profile">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg><span>Profile</span><b id="tab-profile-n" class="tab-badge" hidden></b></button>
+</nav>
+
+<!-- ============================================================ JOB SHEET -->
+<div id="sheet" class="sheet-wrap" hidden>
+  <div class="scrim" data-close></div>
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="sh-title">
+    <div class="grab" aria-hidden="true"></div>
+    <div class="sheet-body">
+      <div class="sh-head">
+        <h2 id="sh-title"></h2>
+        <p id="sh-co"></p>
+        <div id="sh-tags" class="tags"></div>
+      </div>
+      <p id="sh-why" class="sh-why" hidden></p>
+      <button id="sh-open" class="btn primary huge" type="button">Apply</button>
+      <p id="sh-open-hint" class="hint center"></p>
+
+      <section class="sh-sec">
+        <div class="sh-sec-head"><h3>Your answers</h3><span class="muted small">Tap to copy</span></div>
+        <div id="sh-answers" class="answers"></div>
+        <div class="ask-ai">
+          <label for="sh-q">A question the form asks</label>
+          <div class="row"><input id="sh-q" type="text" placeholder="How many years of experience with Python?" autocomplete="off">
+            <button id="sh-q-btn" class="btn" type="button">Answer</button></div>
+          <div id="sh-q-out" class="ask-out" hidden></div>
+        </div>
+      </section>
+
+      <section class="sh-sec">
+        <div class="sh-sec-head"><h3>Cover letter</h3></div>
+        <div id="sh-letter" class="letter" hidden></div>
+        <div class="row wrap">
+          <button id="sh-letter-btn" class="btn" type="button">Write one for this job</button>
+          <button id="sh-letter-copy" class="btn" type="button" hidden>Copy</button>
+        </div>
+        <p id="sh-letter-hint" class="hint"></p>
+      </section>
+
+      <section class="sh-sec">
+        <div class="sh-sec-head"><h3>Note</h3></div>
+        <textarea id="sh-note" rows="2" placeholder="Who you talked to, the salary they mentioned…"></textarea>
+      </section>
+      <button id="sh-remove" class="btn ghost-danger wide" type="button">Remove from my jobs</button>
+    </div>
+    <div class="sheet-foot">
+      <button id="sh-skip" class="btn" type="button">Skip</button>
+      <button id="sh-applied" class="btn good" type="button">I applied</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ DID YOU APPLY? -->
+<div id="ask" class="sheet-wrap" hidden>
+  <div class="scrim" data-close></div>
+  <div class="sheet small" role="dialog" aria-modal="true" aria-labelledby="ask-title">
+    <div class="grab" aria-hidden="true"></div>
+    <div class="sheet-body">
+      <div id="ask-q">
+        <h2 id="ask-title">Did you apply?</h2>
+        <p id="ask-job" class="ask-job"></p>
+        <div class="ask-buttons">
+          <button id="ask-yes" class="btn good huge" type="button">Yes, I sent it</button>
+          <div class="row">
+            <button id="ask-later" class="btn" type="button">Not yet</button>
+            <button id="ask-skip" class="btn" type="button">Skip this job</button>
+          </div>
+        </div>
+      </div>
+      <div id="ask-sent" hidden>
+        <div class="stamp" aria-hidden="true">Sent</div>
+        <h2 id="ask-sent-title">Added to Applied</h2>
+        <p id="ask-next-text" class="ask-job"></p>
+        <div class="ask-buttons">
+          <button id="ask-next" class="btn primary huge" type="button">Apply to the next one</button>
+          <button id="ask-done" class="btn" type="button">Done for now</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div id="toast" class="toast" role="status" hidden></div>
 <script src="/ui/app.js"></script>
 </body>

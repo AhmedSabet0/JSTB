@@ -1,6 +1,6 @@
 #!/bin/bash
-# One-time setup on a fresh Ubuntu VM (Azure, AWS...): swap, Docker, the .env file, then start the server.
-# Run it from the unzipped folder:  bash setup-vm.sh
+# One-time setup on a fresh Ubuntu VM (Oracle, Azure, AWS...): swap, firewall, Docker, the .env file, then start the
+# server. Run it from ~/autoapply-server (GitHub Actions deploys there):  bash setup-vm.sh
 # Running it again is safe: it keeps the existing .env and only rebuilds and restarts the containers.
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -17,6 +17,16 @@ if ! swapon --show 2>/dev/null | grep -q /swapfile; then
   grep -q '^/swapfile ' /etc/fstab || echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab >/dev/null
 fi
 
+# Oracle Cloud's Ubuntu images reject everything but SSH in iptables: let the web in (ports 80 and 443).
+if sudo iptables -S INPUT 2>/dev/null | grep -q -- '-j REJECT'; then
+  say "Opening ports 80 and 443 in the firewall"
+  for rule in "-p tcp --dport 80" "-p tcp --dport 443" "-p udp --dport 443"; do
+    # shellcheck disable=SC2086
+    sudo iptables -C INPUT $rule -j ACCEPT 2>/dev/null || sudo iptables -I INPUT $rule -j ACCEPT
+  done
+  if command -v netfilter-persistent >/dev/null 2>&1; then sudo netfilter-persistent save >/dev/null 2>&1 || true; fi
+fi
+
 if ! command -v docker >/dev/null 2>&1; then
   say "Installing Docker"
   curl -fsSL https://get.docker.com | sudo sh
@@ -24,7 +34,7 @@ fi
 
 if [ ! -f .env ]; then
   say "Server settings"
-  read -rp "Domain (for example autoapply-sabet.eastus2.cloudapp.azure.com): " DOMAIN
+  read -rp "Domain (for example 145-241-153-177.sslip.io, your IP with dashes): " DOMAIN
   DOMAIN=${DOMAIN#https://}
   DOMAIN=${DOMAIN%/}
   read -rp "Contact email (shown on the privacy policy): " CONTACT
@@ -51,7 +61,7 @@ DNSIP=$(getent ahostsv4 "$DOMAIN" 2>/dev/null | awk 'NR==1 {print $1}' || true)
 if [ -n "$MYIP" ] && [ "$DNSIP" != "$MYIP" ]; then
   echo
   echo "Warning: $DOMAIN points to '${DNSIP:-nothing}', but this server's public IP is $MYIP."
-  echo "The HTTPS certificate only works once the domain points here (Azure: Public IP > Configuration > DNS name label)."
+  echo "The HTTPS certificate only works once the domain points here (with sslip.io: your IP with dashes, like ${MYIP//./-}.sslip.io)."
 fi
 
 say "Building and starting the server"
@@ -67,7 +77,8 @@ for _ in $(seq 1 60); do
   fi
   sleep 5
 done
-echo "Not answering over HTTPS yet. Check that ports 80 and 443 are open and the domain points here, then look at:"
+echo "Not answering over HTTPS yet. Check that ports 80 and 443 are open (Oracle: the subnet's Security List needs"
+echo "ingress rules for TCP 80 and 443 from 0.0.0.0/0) and that the domain points here, then look at:"
 echo "  sudo docker compose logs caddy"
 echo "  sudo docker compose logs app"
 exit 1

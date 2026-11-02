@@ -1,11 +1,18 @@
 package com.autoapply.bot.app;
 
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.content.ActivityNotFoundException;
+import android.content.ClipData;
+import android.content.ClipboardManager;
+import android.content.Context;
+import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.res.Configuration;
 import android.graphics.Color;
 import android.graphics.Typeface;
+import android.graphics.drawable.GradientDrawable;
+import android.text.TextUtils;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -28,24 +35,33 @@ import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.Button;
 import android.widget.FrameLayout;
+import android.widget.ImageButton;
 import android.widget.LinearLayout;
+import android.widget.ProgressBar;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import com.autoapply.bot.R;
 import com.autoapply.bot.core.Json;
+import com.autoapply.bot.core.Util;
 
 import java.io.IOException;
 import java.io.InputStream;
 import java.lang.ref.WeakReference;
 import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
-/** The app's screen: the dashboard (same as the PC version), the LinkedIn sign-in screen and Live view. */
+/** The app's screen: the dashboard, the LinkedIn sign-in screen, Live view, and the in-app browser for applying on a
+ *  company's site (it fills the form for you to check and send). Jobs shared to the app from LinkedIn or a browser
+ *  join your list. */
 public final class MainActivity extends Activity {
     static final String ASSET_HOST = "appassets.androidplatform.net";
     static final int REQ_FILE = 1;
     static final int REQ_NOTIFY = 2;
+    static final int REQ_SITE_FILE = 3;
 
     private AndroidPlatform platform;
     private FrameLayout root;
@@ -242,6 +258,28 @@ public final class MainActivity extends Activity {
             });
         }
 
+        /** Copy an answer, to paste it into a form in another app (LinkedIn). */
+        @JavascriptInterface
+        public void copy(final String text) {
+            platform.main.post(new Runnable() {
+                @Override
+                public void run() {
+                    ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+                    if (cm != null) {
+                        cm.setPrimaryClip(ClipData.newPlainText("Auto Apply", text == null ? "" : text));
+                    }
+                }
+            });
+        }
+
+        /** A job shared to the app while the dashboard was loading: {ok, item} or {ok: false, error}. */
+        @JavascriptInterface
+        public String pending() {
+            String p = pendingShare;
+            pendingShare = "";
+            return p == null ? "" : p;
+        }
+
         @JavascriptInterface
         public String version() {
             try {
@@ -260,7 +298,27 @@ public final class MainActivity extends Activity {
         handle(intent);
     }
 
+    private volatile String pendingShare = "";
+
     private void handle(Intent intent) {
+        if (intent != null && Intent.ACTION_SEND.equals(intent.getAction())) {
+            final String text = intent.getStringExtra(Intent.EXTRA_TEXT);
+            final String subject = intent.getStringExtra(Intent.EXTRA_SUBJECT);
+            intent.setAction(null);  // once
+            closePanes();
+            if (text == null && subject == null) {
+                return;
+            }
+            bridgePool.execute(new Runnable() {
+                @Override
+                public void run() {
+                    pendingShare = platform.api.handle("/api/copilot/add",
+                            Json.stringify(Json.obj("text", text == null ? "" : text, "subject", subject == null ? "" : subject)));
+                    js("window.aaPending && window.aaPending()");
+                }
+            });
+            return;
+        }
         String open = intent == null ? null : intent.getStringExtra("open");
         if ("signin".equals(open)) {
             showSignIn();
@@ -275,6 +333,7 @@ public final class MainActivity extends Activity {
         super.onResume();
         platform.activityResumed = true;
         Notifs.cancel(this, Notifs.ID_BRIEF);
+        js("window.aaResumed && window.aaResumed()");  // back from LinkedIn: did you apply?
         new Thread(new Runnable() {
             @Override
             public void run() {
@@ -309,6 +368,14 @@ public final class MainActivity extends Activity {
     }
 
     void handleBack() {
+        if (browserPane != null) {
+            if (browserWeb != null && browserWeb.canGoBack()) {
+                browserWeb.goBack();
+            } else {
+                closeBrowser();
+            }
+            return;
+        }
         if (signInPane != null || livePane != null) {
             closePanes();
             return;
@@ -331,6 +398,10 @@ public final class MainActivity extends Activity {
         if (request == REQ_FILE && fileCallback != null) {
             fileCallback.onReceiveValue(WebChromeClient.FileChooserParams.parseResult(result, data));
             fileCallback = null;
+        }
+        if (request == REQ_SITE_FILE && browserFiles != null) {
+            browserFiles.onReceiveValue(WebChromeClient.FileChooserParams.parseResult(result, data));
+            browserFiles = null;
         }
     }
 
@@ -381,6 +452,18 @@ public final class MainActivity extends Activity {
     }
 
     void closePanes() {
+        if (browserPane != null) {
+            root.removeView(browserPane);
+            browserPane = null;
+            if (browserWeb != null) {
+                browserWeb.destroy();
+                browserWeb = null;
+            }
+            if (browserFiles != null) {
+                browserFiles.onReceiveValue(null);
+                browserFiles = null;
+            }
+        }
         if (signInPane != null) {
             root.removeView(signInPane);
             signInPane = null;
@@ -479,6 +562,466 @@ public final class MainActivity extends Activity {
                 }
             }
         });
+    }
+
+    // ------------------------------------------------------------------ the in-app browser (applying on a company's site)
+    private LinearLayout browserPane;
+    private WebView browserWeb;
+    private ProgressBar browserProgress;
+    private TextView browserTitleView;
+    private TextView browserHostView;
+    private Button browserFillBtn;
+    private Button browserMainBtn;
+    private ValueCallback<Uri[]> browserFiles;
+    private String browserJob = "";
+    private String browserJobTitle = "";
+    private boolean browserApplied;
+    private String fitAsked = "";
+    private String fillJs;
+
+    void js(final String code) {
+        platform.main.post(new Runnable() {
+            @Override
+            public void run() {
+                if (!destroyed) {
+                    dash.evaluateJavascript(code, null);
+                }
+            }
+        });
+    }
+
+    private String fillScript() {
+        if (fillJs == null) {
+            try {
+                InputStream in = getAssets().open("fill.js");
+                try {
+                    fillJs = new String(Util.readAll(in), Util.UTF8);
+                } finally {
+                    in.close();
+                }
+            } catch (IOException e) {
+                fillJs = "";
+            }
+        }
+        return fillJs;
+    }
+
+    /** evaluateJavascript gives the script's value as JSON; our scripts return JSON text, so it is a string in JSON. */
+    private static String jsText(String raw) {
+        Object v = Json.tryParse(raw);
+        return v instanceof String ? (String) v : "";
+    }
+
+    private GradientDrawable round(int fill, int stroke) {
+        GradientDrawable g = new GradientDrawable();
+        g.setCornerRadius(dp(14));
+        g.setColor(fill);
+        if (stroke != 0) {
+            g.setStroke(dp(1), stroke);
+        }
+        return g;
+    }
+
+    private Button barButton(String text, boolean primary) {
+        Button b = new Button(this);
+        b.setText(text);
+        b.setAllCaps(false);
+        b.setTextSize(15);
+        b.setTypeface(Typeface.DEFAULT_BOLD);
+        b.setStateListAnimator(null);
+        b.setTextColor(primary ? Color.WHITE : (dark ? 0xffe7edf6 : 0xff13213c));
+        b.setBackground(primary ? round(dark ? 0xff3d8fe0 : 0xff0a66c2, 0) : round(dark ? 0xff152034 : 0xffffffff, dark ? 0xff2a3a55 : 0xffd5dde8));
+        return b;
+    }
+
+    /** A company's job page in the app: Fill puts your answers in its form (you check them and send it yourself), and
+     *  the file button offers your CV. `jobId` is the job in your list; without it, Save adds the page to your list. */
+    void showBrowser(String url, String jobId, String title) {
+        closePanes();
+        browserJob = jobId == null ? "" : jobId;
+        browserJobTitle = title == null ? "" : title;
+        browserApplied = false;
+        fitAsked = "";
+        int bg = dark ? 0xff0d1420 : 0xffffffff;
+        int ink = dark ? 0xffe7edf6 : 0xff13213c;
+        int ink2 = dark ? 0xff9aa9c0 : 0xff55637d;
+        browserPane = new LinearLayout(this);
+        browserPane.setOrientation(LinearLayout.VERTICAL);
+        browserPane.setBackgroundColor(bg);
+        browserPane.setClickable(true);
+
+        LinearLayout bar = new LinearLayout(this);
+        bar.setOrientation(LinearLayout.HORIZONTAL);
+        bar.setGravity(Gravity.CENTER_VERTICAL);
+        bar.setPadding(dp(4), dp(6), dp(14), dp(6));
+        ImageButton close = new ImageButton(this);
+        close.setImageResource(R.drawable.ic_close);
+        close.setColorFilter(ink);
+        close.setBackgroundColor(Color.TRANSPARENT);
+        close.setContentDescription("Close");
+        close.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                closeBrowser();
+            }
+        });
+        bar.addView(close, new LinearLayout.LayoutParams(dp(48), dp(48)));
+        LinearLayout texts = new LinearLayout(this);
+        texts.setOrientation(LinearLayout.VERTICAL);
+        browserTitleView = new TextView(this);
+        browserTitleView.setTextSize(15.5f);
+        browserTitleView.setTypeface(Typeface.DEFAULT_BOLD);
+        browserTitleView.setTextColor(ink);
+        browserTitleView.setSingleLine(true);
+        browserTitleView.setEllipsize(TextUtils.TruncateAt.END);
+        browserTitleView.setText(browserJobTitle.isEmpty() ? "Loading…" : browserJobTitle);
+        browserHostView = new TextView(this);
+        browserHostView.setTextSize(12.5f);
+        browserHostView.setTextColor(ink2);
+        browserHostView.setSingleLine(true);
+        browserHostView.setEllipsize(TextUtils.TruncateAt.MIDDLE);
+        texts.addView(browserTitleView);
+        texts.addView(browserHostView);
+        bar.addView(texts, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        browserPane.addView(bar, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        browserProgress = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
+        browserProgress.setMax(100);
+        browserProgress.setIndeterminate(false);
+        browserPane.addView(browserProgress, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(3)));
+
+        browserWeb = new WebView(this);
+        WebSettings s = browserWeb.getSettings();
+        s.setJavaScriptEnabled(true);
+        s.setDomStorageEnabled(true);
+        s.setAllowFileAccess(false);
+        s.setAllowContentAccess(true);
+        s.setSupportMultipleWindows(false);
+        s.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
+        s.setBuiltInZoomControls(true);
+        s.setDisplayZoomControls(false);
+        CookieManager.getInstance().setAcceptThirdPartyCookies(browserWeb, true);
+        browserWeb.setWebViewClient(new WebViewClient() {
+            @Override
+            public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
+                Uri u = request.getUrl();
+                String scheme = u.getScheme() == null ? "" : u.getScheme();
+                if ("https".equals(scheme) || "http".equals(scheme)) {
+                    return false;
+                }
+                if ("mailto".equals(scheme) || "tel".equals(scheme)) {
+                    openOutside(u);
+                }
+                return true;  // other apps' links (intent:, market:...) stay closed
+            }
+
+            @Override
+            public void onPageFinished(WebView view, String url) {
+                browserProgress.setVisibility(View.INVISIBLE);
+                showBrowserPage(view);
+                readJobPage(view, url);
+            }
+        });
+        browserWeb.setWebChromeClient(new WebChromeClient() {
+            @Override
+            public void onProgressChanged(WebView view, int p) {
+                browserProgress.setVisibility(p < 100 ? View.VISIBLE : View.INVISIBLE);
+                browserProgress.setProgress(p);
+            }
+
+            @Override
+            public void onReceivedTitle(WebView view, String t) {
+                showBrowserPage(view);
+            }
+
+            @Override
+            public boolean onShowFileChooser(WebView view, ValueCallback<Uri[]> callback, FileChooserParams params) {
+                if (browserFiles != null) {
+                    browserFiles.onReceiveValue(null);
+                }
+                browserFiles = callback;
+                chooseSiteFile(params);
+                return true;
+            }
+        });
+        browserPane.addView(browserWeb, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
+
+        View line = new View(this);
+        line.setBackgroundColor(dark ? 0xff22304a : 0xffe2e8f0);
+        browserPane.addView(line, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 1));
+        LinearLayout bottom = new LinearLayout(this);
+        bottom.setOrientation(LinearLayout.HORIZONTAL);
+        bottom.setPadding(dp(12), dp(10), dp(12), dp(10));
+        bottom.setBackgroundColor(dark ? 0xff111a2b : 0xfff6f8fb);
+        browserFillBtn = barButton("Fill the form", false);
+        browserFillBtn.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                fillForm();
+            }
+        });
+        browserMainBtn = barButton("", true);
+        browserMainBtn.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                if (browserJob.isEmpty()) {
+                    saveBrowserJob();
+                } else {
+                    markBrowserApplied();
+                }
+            }
+        });
+        LinearLayout.LayoutParams half = new LinearLayout.LayoutParams(0, dp(50), 1);
+        LinearLayout.LayoutParams half2 = new LinearLayout.LayoutParams(0, dp(50), 1);
+        half2.leftMargin = dp(10);
+        bottom.addView(browserFillBtn, half);
+        bottom.addView(browserMainBtn, half2);
+        browserPane.addView(bottom, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        paintBrowserButtons();
+        root.addView(browserPane, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        browserWeb.loadUrl(url);
+    }
+
+    private void paintBrowserButtons() {
+        if (browserMainBtn != null) {
+            browserMainBtn.setText(browserJob.isEmpty() ? "Save to my jobs" : "I applied");
+        }
+    }
+
+    private void showBrowserPage(WebView view) {
+        if (browserWeb != view || browserTitleView == null) {
+            return;
+        }
+        String t = view.getTitle();
+        String url = view.getUrl() == null ? "" : view.getUrl();
+        Uri u = Uri.parse(url);
+        browserTitleView.setText(t != null && !t.trim().isEmpty() && !url.contains(t) ? t.trim()
+                : (browserJobTitle.isEmpty() ? (u.getHost() == null ? "" : u.getHost()) : browserJobTitle));
+        browserHostView.setText((u.getHost() == null ? "" : u.getHost().replaceFirst("^www\\.", "")) + (u.getPath() == null ? "" : u.getPath()));
+    }
+
+    /** The job's page: its text tells how well the job fits your CV (done once per job, when the AI is on). */
+    private void readJobPage(final WebView view, final String url) {
+        if (browserJob.isEmpty() || browserJob.equals(fitAsked)) {
+            return;
+        }
+        final String job = browserJob;
+        view.evaluateJavascript(fillScript() + "\n;window.AAFill.page()", new ValueCallback<String>() {
+            @Override
+            public void onReceiveValue(String raw) {
+                final Map<String, Object> pg = Json.map(Json.tryParse(jsText(raw)));
+                if (Json.str(pg, "text").trim().length() < 400 || !job.equals(browserJob)) {
+                    return;
+                }
+                fitAsked = job;
+                bridgePool.execute(new Runnable() {
+                    @Override
+                    public void run() {
+                        platform.api.handle("/api/copilot/fit", Json.stringify(Json.obj("id", job, "text", Json.str(pg, "text"),
+                                "heading", Json.str(pg, "heading"), "page_title", Json.str(pg, "title"))));
+                        js("window.aaRefreshJobs && window.aaRefreshJobs()");
+                    }
+                });
+            }
+        });
+    }
+
+    /** Fill: your answers go into the form on the page. You check them and send it yourself. */
+    private void fillForm() {
+        if (browserWeb == null) {
+            return;
+        }
+        final WebView web = browserWeb;
+        browserFillBtn.setEnabled(false);
+        browserFillBtn.setText("Filling…");
+        web.evaluateJavascript(fillScript() + "\n;window.AAFill.collect()", new ValueCallback<String>() {
+            @Override
+            public void onReceiveValue(String raw) {
+                final Object fields = Json.tryParse(jsText(raw));
+                if (!(fields instanceof List) || ((List<?>) fields).isEmpty()) {
+                    web.evaluateJavascript("window.AAFill.frames()", new ValueCallback<String>() {
+                        @Override
+                        public void onReceiveValue(String fr) {
+                            List<Object> frames = Json.arr(Json.tryParse(jsText(fr)));
+                            fillDone();
+                            if (!frames.isEmpty() && web == browserWeb) {
+                                web.loadUrl(String.valueOf(frames.get(0)));
+                                Toast.makeText(MainActivity.this, "The form was inside the page, so it is open on its own now. "
+                                        + "Tap Fill the form again.", Toast.LENGTH_LONG).show();
+                            } else {
+                                Toast.makeText(MainActivity.this, "No form on this page yet. Tap the site's Apply button, then "
+                                        + "Fill the form.", Toast.LENGTH_LONG).show();
+                            }
+                        }
+                    });
+                    return;
+                }
+                final String job = browserJob;
+                final String title = browserTitleView == null ? "" : String.valueOf(browserTitleView.getText());
+                bridgePool.execute(new Runnable() {
+                    @Override
+                    public void run() {
+                        String out = platform.api.handle("/api/fill", Json.stringify(Json.obj("id", job, "title", title,
+                                "company", "", "fields", fields)));
+                        final Map<String, Object> r = Json.map(Json.tryParse(out));
+                        platform.main.post(new Runnable() {
+                            @Override
+                            public void run() {
+                                if (web != browserWeb || destroyed) {
+                                    return;
+                                }
+                                if (Boolean.FALSE.equals(r.get("ok"))) {
+                                    fillDone();
+                                    Toast.makeText(MainActivity.this, Json.str(r, "error"), Toast.LENGTH_LONG).show();
+                                    return;
+                                }
+                                final List<Object> skipped = Json.arr(r.get("skipped"));
+                                web.evaluateJavascript("window.AAFill.apply(" + Json.stringify(r.get("answers")) + ")",
+                                        new ValueCallback<String>() {
+                                            @Override
+                                            public void onReceiveValue(String n) {
+                                                fillDone();
+                                                int filled = (int) Json.num(Json.obj("n", Json.tryParse(n)), "n", 0);
+                                                String msg = filled == 0 ? "Nothing to fill here: the form's fields are filled already, or "
+                                                        + "your answers do not cover them."
+                                                        : "Filled " + filled + (filled == 1 ? " field" : " fields") + ". Check them"
+                                                        + (skipped.isEmpty() ? "" : ", answer " + skipped.size() + " more yourself")
+                                                        + ", attach your CV and send it.";
+                                                Toast.makeText(MainActivity.this, msg, Toast.LENGTH_LONG).show();
+                                            }
+                                        });
+                            }
+                        });
+                    }
+                });
+            }
+        });
+    }
+
+    private void fillDone() {
+        if (browserFillBtn != null) {
+            browserFillBtn.setEnabled(true);
+            browserFillBtn.setText("Fill the form");
+        }
+    }
+
+    /** The site asks for a file: your CV, or another file from the phone. */
+    private void chooseSiteFile(final WebChromeClient.FileChooserParams params) {
+        Map<String, Object> cv = platform.engine.config.status(platform.engine.config.load());
+        final String cvName = Json.str(cv, "cv_name");
+        if (!Json.bool(cv, "has_cv")) {
+            pickSiteFile(params);
+            return;
+        }
+        new AlertDialog.Builder(this)
+                .setTitle("Attach a file")
+                .setItems(new CharSequence[]{"Your CV (" + cvName + ")", "Another file…"}, new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface d, int which) {
+                        if (which == 0) {
+                            if (browserFiles != null) {
+                                browserFiles.onReceiveValue(new Uri[]{FilesProvider.uriForCv(cvName)});
+                                browserFiles = null;
+                            }
+                        } else {
+                            pickSiteFile(params);
+                        }
+                    }
+                })
+                .setOnCancelListener(new DialogInterface.OnCancelListener() {
+                    @Override
+                    public void onCancel(DialogInterface d) {
+                        if (browserFiles != null) {
+                            browserFiles.onReceiveValue(null);
+                            browserFiles = null;
+                        }
+                    }
+                })
+                .show();
+    }
+
+    private void pickSiteFile(WebChromeClient.FileChooserParams params) {
+        try {
+            startActivityForResult(params.createIntent(), REQ_SITE_FILE);
+        } catch (ActivityNotFoundException e) {
+            if (browserFiles != null) {
+                browserFiles.onReceiveValue(null);
+                browserFiles = null;
+            }
+        }
+    }
+
+    private void saveBrowserJob() {
+        if (browserWeb == null) {
+            return;
+        }
+        final String url = browserWeb.getUrl() == null ? "" : browserWeb.getUrl();
+        final String title = browserTitleView == null ? "" : String.valueOf(browserTitleView.getText());
+        browserMainBtn.setEnabled(false);
+        bridgePool.execute(new Runnable() {
+            @Override
+            public void run() {
+                final Map<String, Object> r = Json.map(Json.tryParse(platform.api.handle("/api/copilot/add",
+                        Json.stringify(Json.obj("text", title + "\n" + url, "subject", "")))));
+                platform.main.post(new Runnable() {
+                    @Override
+                    public void run() {
+                        if (browserMainBtn == null) {
+                            return;
+                        }
+                        browserMainBtn.setEnabled(true);
+                        if (Boolean.FALSE.equals(r.get("ok"))) {
+                            Toast.makeText(MainActivity.this, Json.str(r, "error"), Toast.LENGTH_LONG).show();
+                            return;
+                        }
+                        Map<String, Object> item = Json.map(r.get("item"));
+                        browserJob = Json.str(item, "id");
+                        browserJobTitle = Json.str(item, "title");
+                        paintBrowserButtons();
+                        Toast.makeText(MainActivity.this, Json.bool(item, "again") ? "Already in your jobs." : "Saved to your jobs.",
+                                Toast.LENGTH_SHORT).show();
+                        js("window.aaRefreshJobs && window.aaRefreshJobs()");
+                        if (browserWeb != null) {
+                            readJobPage(browserWeb, url);
+                        }
+                    }
+                });
+            }
+        });
+    }
+
+    private void markBrowserApplied() {
+        final String job = browserJob;
+        browserMainBtn.setEnabled(false);
+        bridgePool.execute(new Runnable() {
+            @Override
+            public void run() {
+                final Map<String, Object> r = Json.map(Json.tryParse(platform.api.handle("/api/copilot/update",
+                        Json.stringify(Json.obj("id", job, "state", "applied")))));
+                platform.main.post(new Runnable() {
+                    @Override
+                    public void run() {
+                        if (browserMainBtn != null) {
+                            browserMainBtn.setEnabled(true);
+                        }
+                        if (Boolean.FALSE.equals(r.get("ok"))) {
+                            Toast.makeText(MainActivity.this, Json.str(r, "error"), Toast.LENGTH_LONG).show();
+                            return;
+                        }
+                        browserApplied = true;
+                        closeBrowser();
+                    }
+                });
+            }
+        });
+    }
+
+    /** Back in the app: it asks whether you applied, unless you said so already. */
+    void closeBrowser() {
+        String job = browserJob;
+        boolean applied = browserApplied;
+        closePanes();
+        js("window.aaBrowserClosed && window.aaBrowserClosed(" + Json.stringify(job) + "," + applied + ")");
     }
 
     // ------------------------------------------------------------------ permissions

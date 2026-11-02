@@ -27,6 +27,7 @@
     <div class="brand"><svg class="logo" viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="16"/><path d="M15 31 49 16 38 49 31 37z"/></svg><b>Auto Apply admin</b></div>
     <nav class="tabs" role="tablist">
       <button class="tab" data-tab="users" role="tab" type="button">Users</button>
+      <button class="tab" data-tab="activity" role="tab" type="button">Activity</button>
       <button class="tab" data-tab="settings" role="tab" type="button">Settings</button>
     </nav>
     <div class="top-actions">
@@ -69,6 +70,20 @@
       <p class="hint foot">Stop ends the run that is going now; the user can start again. To keep someone from starting, turn Pro off.</p>
     </section>
 
+    <!-- -------------------------------------------------------- ACTIVITY -->
+    <section id="t-activity" class="tabpane" hidden>
+      <div class="toolbar">
+        <select id="a-user" aria-label="Whose activity"><option value="">Everyone</option></select>
+        <input id="a-q" type="search" placeholder="Filter lines (applied, error, a company…)" aria-label="Filter lines">
+        <label class="switch-row inline"><input id="a-live" type="checkbox" checked><span class="switch" aria-hidden="true"></span><span><b>Live</b></span></label>
+      </div>
+      <div class="card feed-card">
+        <ol id="a-feed" class="feed" aria-live="off"></ol>
+        <p id="a-empty" class="empty" hidden>Nothing yet. Lines show up here as the apps work.</p>
+      </div>
+      <p class="hint foot">The same lines users see under Activity in their app: searches, each job and why it was sent or skipped, answers filled in, and errors.</p>
+    </section>
+
     <!-- -------------------------------------------------------- SETTINGS -->
     <section id="t-settings" class="tabpane" hidden>
       <div class="cards">
@@ -106,9 +121,13 @@
               <input id="s-pro" type="number" min="1" max="50000" inputmode="numeric">
               <p class="hint">One application uses about 2 to 8.</p></div>
           </div>
-          <label for="s-cap">Applications a day, each user</label>
-          <input id="s-cap" type="number" min="0" max="300" inputmode="numeric">
-          <p class="hint">0 lets each user's own setting decide. Otherwise the app sends at most this many a day.</p>
+          <div class="cols">
+            <div><label for="s-cap">Applications a day, each user</label>
+              <input id="s-cap" type="number" min="0" max="300" inputmode="numeric"></div>
+            <div><label for="s-caph">Applications an hour, each user</label>
+              <input id="s-caph" type="number" min="0" max="30" inputmode="numeric"></div>
+          </div>
+          <p class="hint">0 lets each user's own setting decide. A user's own limit (Details) beats these.</p>
           <button class="btn primary" type="submit">Save</button>
         </form>
 
@@ -118,6 +137,24 @@
             <span><b>Allow new accounts</b><small>Turn off to stop sign-ups from the app.</small></span></label>
           <label class="switch-row"><input id="s-autopro" type="checkbox"><span class="switch" aria-hidden="true"></span>
             <span><b>New accounts start with Pro</b><small>Handy while testers try the app (Google Play closed testing).</small></span></label>
+          <button class="btn primary" type="submit">Save</button>
+        </form>
+
+        <form class="card" id="f-app" autocomplete="off">
+          <h2>App updates and message</h2>
+          <label for="s-announce">Message on every app's home screen</label>
+          <textarea id="s-announce" rows="2" maxlength="300" placeholder="Empty = no message"></textarea>
+          <div class="cols">
+            <div><label for="s-minv-github">Oldest allowed version, GitHub app</label>
+              <input id="s-minv-github" type="number" min="0" inputmode="numeric"></div>
+            <div><label for="s-minv-play">Oldest allowed version, Google Play app</label>
+              <input id="s-minv-play" type="number" min="0" inputmode="numeric"></div>
+          </div>
+          <p class="hint">A version code (the number after the dot in the list below). Older apps show "Update required" and stop until updated. 0 = no limit.</p>
+          <label for="s-playurl">Google Play link</label>
+          <input id="s-playurl" type="url" spellcheck="false">
+          <h3>Versions in use</h3>
+          <ul id="s-versions" class="versions"></ul>
           <button class="btn primary" type="submit">Save</button>
         </form>
 
@@ -149,8 +186,19 @@
       </div>
       <dl id="d-facts" class="facts"></dl>
 
-      <h3>Recent applications</h3>
+      <h3>Live activity</h3>
+      <ol id="d-feed" class="feed small-feed"></ol>
+
+      <h3>Applications</h3>
       <ul id="d-apps" class="apps"></ul>
+
+      <h3>Limits for this user</h3>
+      <div class="cols">
+        <div><label for="d-cap">A day</label><input id="d-cap" type="number" min="0" max="300" inputmode="numeric" placeholder="Default"></div>
+        <div><label for="d-caph">An hour</label><input id="d-caph" type="number" min="0" max="30" inputmode="numeric" placeholder="Default"></div>
+      </div>
+      <p class="hint">Empty = the limits in Settings.</p>
+      <button id="d-caps-save" class="btn" type="button">Save limits</button>
 
       <h3>Note</h3>
       <textarea id="d-note" rows="2" placeholder="Only you see this (paid until…, company…)"></textarea>
@@ -160,6 +208,10 @@
       <p class="hint">Sets a new password and signs the user out on every phone. Tell them the new one.</p>
       <div class="row"><input id="d-pw" type="text" autocomplete="off" spellcheck="false" placeholder="New password (8+ characters)">
         <button id="d-pw-save" class="btn" type="button">Set</button></div>
+
+      <h3>Phones</h3>
+      <p class="hint">Signs the user out on every phone (they sign in again with their password).</p>
+      <button id="d-revoke" class="btn" type="button">Sign out everywhere</button>
 
       <h3 class="danger-title">Delete user</h3>
       <p class="hint">Deletes the account and everything the app reported for it.</p>

@@ -42,6 +42,11 @@ public interface Platform {
 
     void requestPermission(String which);
 
+    /** Open a link: how = "linkedin" (the LinkedIn app when it is installed), "inapp" (the app's own browser, with Fill,
+     *  for a company's site), "browser" (the phone's browser) or "store" (Google Play). `jobId` and `title` name the job
+     *  for the in-app browser. */
+    void openLink(String url, String how, String jobId, String title);
+
     /** {"flavor": "play" | "github", "self_update": true when the app updates itself from GitHub releases} */
     Map<String, Object> buildInfo();
 

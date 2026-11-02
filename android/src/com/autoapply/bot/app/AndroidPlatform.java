@@ -1,6 +1,7 @@
 package com.autoapply.bot.app;
 
 import android.app.NotificationManager;
+import android.content.ActivityNotFoundException;
 import android.content.ClipData;
 import android.content.Context;
 import android.content.Intent;
@@ -14,6 +15,7 @@ import android.os.Looper;
 import android.os.PowerManager;
 import android.webkit.CookieManager;
 import android.webkit.WebSettings;
+import android.widget.Toast;
 
 import com.autoapply.bot.core.Account;
 import com.autoapply.bot.core.Api;
@@ -57,6 +59,8 @@ public final class AndroidPlatform implements Platform {
         Account.defaultServer = BuildConfig.SERVER_URL;
         Account.device = ((Build.MANUFACTURER == null ? "" : Build.MANUFACTURER) + " " + (Build.MODEL == null ? "" : Build.MODEL)).trim();
         Account.appVersion = Json.str(appVersion(), "name");
+        Account.flavor = BuildConfig.FLAVOR;
+        Account.versionCode = Json.num(appVersion(), "code", 0) > 0 ? (long) Json.num(appVersion(), "code", 0) : 0;
         Notifs.channels(app);
         engine = new Engine(this, app.getFilesDir());
         api = new Api(engine);
@@ -221,6 +225,59 @@ public final class AndroidPlatform implements Platform {
                 MainActivity a = activity();
                 if (a != null) {
                     a.requestPerm(which);
+                }
+            }
+        });
+    }
+
+    // ------------------------------------------------------------------ links
+    static final String LINKEDIN = "com.linkedin.android";
+
+    boolean installed(String pkg) {
+        try {
+            app.getPackageManager().getPackageInfo(pkg, 0);
+            return true;
+        } catch (PackageManager.NameNotFoundException e) {
+            return false;
+        }
+    }
+
+    @Override
+    public void openLink(final String url, final String how, final String jobId, final String title) {
+        main.post(new Runnable() {
+            @Override
+            public void run() {
+                MainActivity a = activity();
+                if ("inapp".equals(how) && a != null && !a.isFinishing()) {
+                    a.showBrowser(url, jobId, title);
+                    return;
+                }
+                Uri uri = Uri.parse(url);
+                Intent i = new Intent(Intent.ACTION_VIEW, uri);
+                i.addCategory(Intent.CATEGORY_BROWSABLE);
+                if ("store".equals(how)) {
+                    String id = uri.getQueryParameter("id");
+                    Intent market = new Intent(Intent.ACTION_VIEW, Uri.parse("market://details?id="
+                            + (id == null || id.isEmpty() ? app.getPackageName() : id)));
+                    if (market.resolveActivity(app.getPackageManager()) != null) {
+                        i = market;
+                    }
+                } else if ("linkedin".equals(how) && installed(LINKEDIN)) {
+                    Intent li = new Intent(Intent.ACTION_VIEW, uri).setPackage(LINKEDIN);
+                    if (li.resolveActivity(app.getPackageManager()) != null) {
+                        i = li;  // the LinkedIn app, where you are signed in and Easy Apply works
+                    }
+                }
+                Context from = a != null && !a.isFinishing() ? a : app;
+                if (from == app) {
+                    i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                }
+                try {
+                    from.startActivity(i);
+                } catch (ActivityNotFoundException e) {
+                    Toast.makeText(app, "No app on this phone can open this link.", Toast.LENGTH_LONG).show();
+                } catch (SecurityException e) {
+                    Toast.makeText(app, "Could not open the link.", Toast.LENGTH_LONG).show();
                 }
             }
         });

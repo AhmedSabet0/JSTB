@@ -12,7 +12,7 @@ import java.util.Map;
 public final class Api {
     public static final String[] SETTINGS_KEYS = {"KEYWORDS", "LOCATION", "DATE_POSTED", "WORK_TYPE", "EXPERIENCE",
         "PAGES_PER_KEYWORD", "SEARCH_EVERY_MIN", "PER_HOUR", "PER_DAY", "MIN_SCORE", "SKIP_COMPANIES", "SKIP_TITLE_WORDS",
-        "NEW_QUESTIONS", "ASK_TIMEOUT_MIN", "UPDATE_SOURCE"};
+        "NEW_QUESTIONS", "ASK_TIMEOUT_MIN", "UPDATE_SOURCE", "DAILY_GOAL"};
 
     private final Engine engine;
     private final java.io.File updateFile;
@@ -87,6 +87,14 @@ public final class Api {
         if (p.equals("/api/facts")) {
             return factsInfo();
         }
+        if (p.equals("/api/copilot")) {
+            Map<String, String> cfg = engine.config.load();
+            return Json.obj("items", engine.copilot.list(), "search_links", engine.copilot.searchLinks(cfg),
+                    "stats", engine.copilot.stats(Util.now()), "location", cfg.get("LOCATION") == null ? "" : cfg.get("LOCATION"));
+        }
+        if (p.equals("/api/tracker")) {
+            return tracker();
+        }
         if (p.equals("/api/open-questions")) {
             List<Map<String, Object>> items = engine.waiting.all();
             Collections.sort(items, new Comparator<Map<String, Object>>() {
@@ -117,7 +125,7 @@ public final class Api {
                 "stats", Json.obj("today", counts[1], "hour", counts[0], "total", engine.store.count("applied"),
                         "week", engine.store.countSince("applied", Util.now() - 7 * 86400),
                         "per_hour", Config.cfgInt(cfg, "PER_HOUR", 1, 30), "per_day", cap > 0 ? Math.min(cap, perDay) : perDay,
-                        "admin_cap", cap,
+                        "admin_cap", cap, "goal", Config.cfgInt(cfg, "DAILY_GOAL", 1, 200),
                         "min_score", Config.cfgInt(cfg, "MIN_SCORE", 0, 10)),
                 "setup", setup,
                 "session", s == null ? null : s.summary(),
@@ -133,12 +141,19 @@ public final class Api {
                 "recent", engine.store.recent("applied", 0, 6),
                 "account", engine.account.info(),
                 "build", engine.platform.buildInfo(),
+                "auto_apply", autoApply(),
+                "copilot", engine.copilot.stats(Util.now()),
                 "platform", "android");
     }
 
     // ------------------------------------------------------------------ app updates
     boolean selfUpdates() {
         return Json.bool(engine.platform.buildInfo(), "self_update");
+    }
+
+    /** The Google Play build has no automatic applying: you apply yourself, with the app's help. */
+    boolean autoApply() {
+        return !"play".equals(Json.str(engine.platform.buildInfo(), "flavor"));
     }
 
     public Map<String, Object> updateInfo() {
@@ -330,6 +345,12 @@ public final class Api {
     // ------------------------------------------------------------------ POST
     private Object post(String p, Map<String, Object> b) {
         if (p.equals("/api/start")) {
+            if (!autoApply()) {
+                throw new IllegalArgumentException("This version applies with you: open Jobs and apply with the app's help.");
+            }
+            if (engine.account.updateRequired()) {
+                throw new IllegalArgumentException("Update the app first: this version is too old.");
+            }
             Bot.Options o = new Bot.Options();
             String mode = Json.str(b, "mode");
             o.dryRun = "dry".equals(mode);
@@ -349,6 +370,53 @@ public final class Api {
         }
         if (p.startsWith("/api/account/")) {
             return account(p.substring("/api/account/".length()), b);
+        }
+        if (p.startsWith("/api/copilot/")) {
+            return copilot(p.substring("/api/copilot/".length()), b);
+        }
+        if (p.equals("/api/fill")) {
+            Map<String, Object> item = Json.str(b, "id").isEmpty() ? null : engine.copilot.get(Json.str(b, "id"));
+            String title = item != null ? Json.str(item, "title") : Json.str(b, "title");
+            String company = item != null ? Json.str(item, "company") : Json.str(b, "company");
+            Map<String, Object> out = Filler.answers(engine, Json.arr(b.get("fields")), title, company);
+            out.put("ok", true);
+            return out;
+        }
+        if (p.equals("/api/tracker/stage")) {
+            String id = Json.str(b, "id");
+            String stage = Json.str(b, "stage");
+            if (!Copilot.STAGES.contains(stage)) {
+                throw new IllegalArgumentException("Unknown stage: " + stage);
+            }
+            if (id.startsWith("copilot:")) {
+                engine.copilot.update(id.substring(8), Json.obj("stage", stage));
+            } else {
+                String jobId = id.startsWith("auto:") ? id.substring(5) : id;
+                Map<String, Object> j = engine.store.setStage(jobId, stage);
+                if (j == null) {
+                    throw new IllegalArgumentException("This application is not there any more.");
+                }
+                engine.reporter.track(Json.obj("job_id", jobId, "title", Json.str(j, "title"), "company", Json.str(j, "company"),
+                        "status", "applied", "channel", "auto", "stage", stage, "url", Json.str(j, "url"), "at", Json.dbl(j, "ts", Util.now())));
+                Util.log("Stage: " + Json.str(j, "title") + " -> " + stage);
+            }
+            Map<String, Object> out = tracker();
+            out.put("ok", true);
+            return out;
+        }
+        if (p.equals("/api/open-link")) {
+            String url = Json.str(b, "url");
+            if (!url.matches("(?i)^https://.+")) {
+                throw new IllegalArgumentException("Only https links open from here.");
+            }
+            engine.platform.openLink(url, Json.str(b, "how").isEmpty() ? "browser" : Json.str(b, "how"), "", "");
+            return Json.obj("ok", true);
+        }
+        if (p.equals("/api/update/store")) {
+            String url = Json.str(Json.map(engine.account.info().get("update")), "play_url");
+            engine.platform.openLink(url.isEmpty() ? "https://play.google.com/store/apps/details?id=com.autoapply.bot" : url,
+                    "store", "", "");
+            return Json.obj("ok", true);
         }
         if (p.equals("/api/cv")) {
             return saveCv(b);
@@ -654,5 +722,131 @@ public final class Api {
         }
         engine.platform.share(f, mime, title);
         return Json.obj("ok", true);
+    }
+
+    // ------------------------------------------------------------------ jobs you apply to yourself
+    private Object copilot(String what, Map<String, Object> b) {
+        Copilot c = engine.copilot;
+        String id = Json.str(b, "id");
+        if (what.equals("add")) {
+            Map<String, Object> item = c.add(Json.str(b, "text"), Json.str(b, "subject"));
+            return Json.obj("ok", true, "item", item, "items", c.list(), "stats", c.stats(Util.now()));
+        }
+        Map<String, Object> item = c.get(id);
+        if (item == null) {
+            throw new IllegalArgumentException("This job is not in your list any more.");
+        }
+        if (what.equals("update")) {
+            Map<String, Object> changes = Json.obj();
+            for (String k : new String[]{"state", "stage", "title", "company", "note"}) {
+                if (b.containsKey(k)) {
+                    changes.put(k, b.get(k) instanceof String ? ((String) b.get(k)).trim() : b.get(k));
+                }
+            }
+            Map<String, Object> it = c.update(id, changes);
+            return Json.obj("ok", true, "item", it, "items", c.list(), "stats", c.stats(Util.now()));
+        }
+        if (what.equals("remove")) {
+            c.remove(id);
+            return Json.obj("ok", true, "items", c.list(), "stats", c.stats(Util.now()));
+        }
+        if (what.equals("open")) {
+            boolean linkedin = "linkedin".equals(Json.str(item, "channel"));
+            Util.log("Opened " + (linkedin ? "on LinkedIn" : "on the company site") + ": " + Json.str(item, "title"));
+            engine.platform.openLink(Json.str(item, "url"), linkedin ? "linkedin" : "inapp", id, Json.str(item, "title"));
+            return Json.obj("ok", true);
+        }
+        if (what.equals("letter")) {
+            requireAi();
+            String letter;
+            try {
+                letter = engine.newAi(engine.config.cvText(), engine.notesForAi(), "apply")
+                        .coverLetter(Json.str(item, "title"), Json.str(item, "company"), Json.str(b, "text"));
+            } catch (Ai.FatalAIError e) {
+                throw new IllegalArgumentException(e.getMessage());
+            } catch (RuntimeException e) {
+                throw new IllegalArgumentException("Could not reach the AI: " + Util.shortError(e, 100));
+            }
+            Map<String, Object> it = c.update(id, Json.obj("letter", letter));
+            return Json.obj("ok", true, "item", it, "letter", letter);
+        }
+        if (what.equals("fit")) {  // the in-app browser read the job page
+            String heading = Json.str(b, "heading").replaceAll("\\s+", " ").trim();
+            String t = Json.str(item, "title");
+            if (heading.length() >= 3 && heading.length() <= 160 && (t.isEmpty() || t.equals(Copilot.hostOf(Json.str(item, "url")))
+                    || t.equals("LinkedIn job") || t.startsWith("http"))) {
+                item = c.update(id, Json.obj("title", heading));  // a better name than the site's address
+            }
+            String text = Json.str(b, "text");
+            if (text.trim().length() < 200 || !engine.account.pro() || item.get("fit") instanceof Number) {
+                return Json.obj("ok", true, "item", item);
+            }
+            try {
+                Object[] r = engine.newAi(engine.config.cvText(), engine.notesForAi(), "apply")
+                        .score(Json.str(item, "title"), Json.str(item, "company"), Util.cut(text, 6000));
+                Map<String, Object> it = c.update(id, Json.obj("fit", r[0], "why", r.length > 1 ? String.valueOf(r[1]) : ""));
+                Util.log("Fit " + r[0] + "/10: " + Json.str(item, "title") + (r.length > 1 ? " (" + Util.cut(String.valueOf(r[1]), 120) + ")" : ""));
+                return Json.obj("ok", true, "item", it);
+            } catch (RuntimeException e) {
+                return Json.obj("ok", true, "item", item, "problem", Util.shortError(e, 100));
+            }
+        }
+        throw new IllegalArgumentException("Unknown request: " + what);
+    }
+
+    private void requireAi() {
+        if (!engine.account.signedIn()) {
+            throw new IllegalArgumentException("Sign in to your account first.");
+        }
+        if (!engine.account.pro()) {
+            throw new IllegalArgumentException(autoApply() ? Engine.NOT_ACTIVE
+                    : "AI help isn't active on your account yet. Your own answers still work: copy them, or Fill on company sites.");
+        }
+    }
+
+    /** Every job you applied to: by auto apply, and by yourself with the app's help. Newest first, with its stage. */
+    private Map<String, Object> tracker() {
+        List<Map<String, Object>> out = new ArrayList<Map<String, Object>>();
+        for (Object o : engine.store.rows(5000)) {
+            Map<String, Object> j = Json.map(o);
+            if (!"applied".equals(Json.str(j, "status"))) {
+                continue;
+            }
+            out.add(Json.obj("id", "auto:" + Json.str(j, "id"), "title", Json.str(j, "title"), "company", Json.str(j, "company"),
+                    "url", Json.str(j, "url"), "channel", "auto", "at", Json.dbl(j, "ts", 0),
+                    "stage", Json.str(j, "stage").isEmpty() ? "applied" : Json.str(j, "stage"), "score", j.get("score")));
+        }
+        for (Map<String, Object> it : engine.copilot.list()) {
+            if (!"applied".equals(Json.str(it, "state"))) {
+                continue;
+            }
+            out.add(Json.obj("id", "copilot:" + Json.str(it, "id"), "title", Json.str(it, "title"), "company", Json.str(it, "company"),
+                    "url", Json.str(it, "url"), "channel", Json.str(it, "channel"), "at", Json.dbl(it, "applied_at", 0),
+                    "stage", Json.str(it, "stage").isEmpty() ? "applied" : Json.str(it, "stage"), "score", it.get("fit")));
+        }
+        Collections.sort(out, new Comparator<Map<String, Object>>() {
+            @Override
+            public int compare(Map<String, Object> a, Map<String, Object> b) {
+                return Double.compare(Json.dbl(b, "at", 0), Json.dbl(a, "at", 0));
+            }
+        });
+        Map<String, Object> stages = Json.obj();
+        for (String s : Copilot.STAGES) {
+            stages.put(s, 0);
+        }
+        double d0 = Copilot.midnight(Util.now(), 0);
+        double w0 = Copilot.midnight(Util.now(), 6);
+        int today = 0;
+        int week = 0;
+        for (Map<String, Object> x : out) {
+            stages.put(Json.str(x, "stage"), Json.num(stages, Json.str(x, "stage"), 0) + 1);
+            if (Json.dbl(x, "at", 0) >= d0) {
+                today++;
+            }
+            if (Json.dbl(x, "at", 0) >= w0) {
+                week++;
+            }
+        }
+        return Json.obj("items", out, "stages", stages, "today", today, "week", week, "total", out.size());
     }
 }

@@ -57,6 +57,13 @@ CREATE TABLE IF NOT EXISTS ai_usage (
   tokens INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (user_id, day)
 );
+CREATE TABLE IF NOT EXISTS events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  at REAL NOT NULL,
+  text TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS events_user ON events(user_id, id);
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS admin_sessions (token_hash TEXT PRIMARY KEY, expires_at REAL NOT NULL);
 """
@@ -70,7 +77,24 @@ DEFAULTS = {
     "max_per_day": "0",          # applications per user per day; 0 = the app's own setting
     "signups_open": "1",
     "new_users_pro": "0",
+    "max_per_hour": "0",         # 0 = the app's own setting
+    "announcement": "",          # shown on every app's home screen
+    "min_version_github": "0",   # versionCode below this must update first
+    "min_version_play": "0",
+    "play_url": "https://play.google.com/store/apps/details?id=com.autoapply.bot",
 }
+
+# Columns added after 2.0, added to existing databases on start.
+MIGRATIONS = [
+    ("users", "max_per_day", "INTEGER"),
+    ("users", "max_per_hour", "INTEGER"),
+    ("users", "flavor", "TEXT NOT NULL DEFAULT ''"),
+    ("users", "version_code", "INTEGER NOT NULL DEFAULT 0"),
+    ("applications", "channel", "TEXT NOT NULL DEFAULT 'auto'"),
+    ("applications", "stage", "TEXT NOT NULL DEFAULT ''"),
+    ("applications", "reason", "TEXT NOT NULL DEFAULT ''"),
+    ("applications", "url", "TEXT NOT NULL DEFAULT ''"),
+]
 
 _local = threading.local()
 
@@ -110,6 +134,10 @@ def init():
     c = conn()
     c.execute("PRAGMA journal_mode = WAL")
     c.executescript(SCHEMA)
+    for table, column, decl in MIGRATIONS:
+        have = {r["name"] for r in c.execute(f"PRAGMA table_info({table})").fetchall()}
+        if column not in have:
+            c.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
     with tx() as t:
         for k, v in DEFAULTS.items():
             t.execute("INSERT OR IGNORE INTO settings(key, value) VALUES (?, ?)", (k, v))

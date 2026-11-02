@@ -1,10 +1,14 @@
-# Builds the app. Every push: a test build (artifacts). A tag like v2.1: the release with the APK (the app's updater
-# reads it) and the Google Play bundle.
+# Builds the app.
+#   Every push to android/: a test build (Actions > the run > Artifacts).
+#   A tag like v3.1: a GitHub release with the APK (the GitHub build's updater installs it on users' phones) and the
+#   Google Play bundle; with the PLAY_SERVICE_ACCOUNT_JSON secret, the bundle also goes to Google Play by itself.
 #
 # Repository settings > Secrets and variables > Actions:
-#   secret   KEYSTORE_BASE64  base64 of keystore/autoapply.jks (never commit the keystore)
-#   secret   KS_PASS          the keystore password
-#   variable SERVER_URL       https://your-server (built into the app)
+#   secret   KEYSTORE_BASE64             base64 of autoapply.jks (never commit the keystore)
+#   secret   KS_PASS                     the keystore password
+#   variable SERVER_URL                  https://your-server (built into the app)
+#   secret   PLAY_SERVICE_ACCOUNT_JSON   optional: a Google Play service account key, to upload releases to Play
+#   variable PLAY_TRACK                  optional: internal (default), alpha (closed testing), beta or production
 name: Android
 
 on:
@@ -38,13 +42,22 @@ jobs:
           ls "$ANDROID_HOME/platforms/android-34/android.jar" || yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-34"
           curl -fsSL -o "$RUNNER_TEMP/bundletool.jar" https://github.com/google/bundletool/releases/download/1.18.1/bundletool-all-1.18.1.jar
 
-      - name: Keystore
+      - name: Signing key
+        id: key
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
         run: |
           mkdir -p keystore
-          echo "$KEYSTORE_BASE64" | base64 -d > keystore/autoapply.jks
-          test -s keystore/autoapply.jks || { echo "Add the KEYSTORE_BASE64 secret"; exit 1; }
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 -d > keystore/autoapply.jks
+            echo "real=yes" >> "$GITHUB_OUTPUT"
+          elif [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            echo "::error::A release needs the KEYSTORE_BASE64 and KS_PASS secrets (see README)."
+            exit 1
+          else
+            echo "::warning::No KEYSTORE_BASE64 secret: this test build is signed with a throwaway key, so it cannot update an installed app."
+            echo "real=no" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Version
         id: v
@@ -55,7 +68,8 @@ jobs:
 
       - name: Build APK (GitHub) and AAB (Google Play)
         env:
-          KS_PASS: ${{ secrets.KS_PASS }}
+          KS_PASS: ${{ secrets.KS_PASS || 'autoapply' }}
+          NEW_KEY: ${{ steps.key.outputs.real == 'no' && '1' || '' }}
           SERVER_URL: ${{ vars.SERVER_URL }}
           VERSION_NAME: ${{ steps.v.outputs.name }}
           VERSION_CODE: ${{ steps.v.outputs.code }}
@@ -63,9 +77,10 @@ jobs:
           export ANDROID_JAR="$ANDROID_HOME/platforms/android-34/android.jar" BUNDLETOOL="$RUNNER_TEMP/bundletool.jar"
           ./build.sh
           FLAVOR=play ./build.sh
+          SUFFIX=$([ -n "$NEW_KEY" ] && echo "-testkey" || true)
           mkdir -p ../dist
-          cp out/github/AutoApply.apk "../dist/AutoApply-$VERSION_NAME.apk"
-          cp out/play/AutoApply.aab "../dist/AutoApply-$VERSION_NAME-play.aab"
+          cp out/github/AutoApply.apk "../dist/AutoApply-$VERSION_NAME$SUFFIX.apk"
+          cp out/play/AutoApply.aab "../dist/AutoApply-$VERSION_NAME$SUFFIX-play.aab"
           rm -f keystore/autoapply.jks
 
       - uses: actions/upload-artifact@v4
@@ -80,3 +95,20 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "$GITHUB_REF_NAME" dist/* --title "Auto Apply ${GITHUB_REF_NAME#v}" --generate-notes
+
+      - name: Google Play upload set up?
+        id: play
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          PLAY_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+        run: echo "ready=$([ -n "$PLAY_JSON" ] && echo yes || echo no)" >> "$GITHUB_OUTPUT"
+
+      - name: Upload to Google Play
+        if: startsWith(github.ref, 'refs/tags/v') && steps.play.outputs.ready == 'yes'
+        uses: r0adkll/upload-google-play@v1
+        with:
+          serviceAccountJsonPlainText: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+          packageName: com.autoapply.bot
+          releaseFiles: dist/*-play.aab
+          track: ${{ vars.PLAY_TRACK || 'internal' }}
+          status: ${{ vars.PLAY_STATUS || 'completed' }}

@@ -67,6 +67,11 @@ and the LinkedIn session (cookies) stays on your phone.</li></ul>
 <li><b>Activity the app reports:</b> whether auto apply is running, its status, the app version and phone model, and for
 each job it applied to (or could not finish): the LinkedIn job ID, job title, company name, result, match score and time.
 This lets us show you and the service admin how many applications were sent, and lets the admin stop auto apply.</li>
+<li><b>The app's activity log:</b> the steps the app takes (searches, the jobs it looked at and why it skipped or applied,
+the answers it filled in, errors), the same lines you see under Activity in the app. The admin uses it to help you and
+to find problems. The newest lines are kept; older ones are deleted automatically.</li>
+<li><b>Jobs you track in the app:</b> when you mark a job as applied, or change its stage (interview, offer...), the job
+title, company, link and stage.</li>
 <li><b>AI usage:</b> how many AI requests your account made each day and how many tokens they used, to enforce daily
 limits.</li></ul>
 <p>The server does not keep access logs of your requests. Your IP address is only held in memory for a short time to

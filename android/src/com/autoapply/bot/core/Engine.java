@@ -33,8 +33,10 @@ public final class Engine {
     public final File debugZip;
     private Thread thread;
     private Bot.Options options;
-    /** Reports the run to the server while it lasts. */
-    private volatile Reporter reporter;
+    /** Keeps the server up to date (activity, applications, stops from the admin). */
+    public final Reporter reporter;
+    /** Jobs you apply to yourself with the app's help, and their stages. */
+    public final Copilot copilot;
     public volatile Session session;
     private volatile LinkedIn current;
 
@@ -46,6 +48,11 @@ public final class Engine {
         this.profile = new Profile(dataDir);
         this.profile.store = store;
         this.account = new Account(dataDir);
+        this.reporter = new Reporter(this, account);
+        this.copilot = new Copilot(this, dataDir);
+        if (account.signedIn()) {
+            reporter.ensureStarted();
+        }
         this.summaryFile = new File(dataDir, "last_summary.json");
         this.briefFile = new File(config.logDir, "last_session.txt");
         this.debugZip = new File(config.logDir, "debug.zip");
@@ -90,10 +97,7 @@ public final class Engine {
                     log("Unexpected error: " + Util.shortError(t));
                     Util.setStatus("state", "error", "message", Util.shortError(t), "error", Util.shortError(t), "job", null);
                 } finally {
-                    Reporter r = reporter;
-                    if (r != null) {
-                        r.finish();  // the server must not think it still runs
-                    }
+                    reporter.runEnded();  // the server must not think it still runs
                     platform.onRunning(false);
                 }
             }
@@ -238,9 +242,7 @@ public final class Engine {
             return;
         }
         Ai ai = newAi(cvText, notesForAi(), "apply");
-        final Reporter reporter = new Reporter(this, account, mode);
-        this.reporter = reporter;
-        reporter.start();
+        reporter.runStarted(mode);
         String[] fin = {"idle", "Finished"};
         Page page;
         Util.setStatus("message", "Opening the browser...");
@@ -249,7 +251,7 @@ public final class Engine {
         } catch (RuntimeException e) {
             log("Could not open the browser: " + Util.shortError(e));
             Util.setStatus("state", "error", "message", "Could not open the browser", "error", Util.shortError(e));
-            reporter.finish();
+            reporter.runEnded();
             return;
         }
         log("Browser: " + platform.browserName());
@@ -352,7 +354,7 @@ public final class Engine {
             Util.stopReason = "";
             Util.setStatus("state", fin[0], "message", fin[1], "job", null, "next_slot_at", 0,
                     "error", "error".equals(fin[0]) ? fin[1] : "");
-            reporter.finish();
+            reporter.runEnded();
             if (started) {
                 platform.onSessionEnd(summary, lines);
             }

@@ -205,7 +205,9 @@ public final class Bot implements LinkedIn.Resolver, LinkedIn.Hooks {
         this.session = session;
         this.noSubmit = args.noSubmit;
         this.cvText = engine.config.cvText();
-        li.hooks = this;
+        if (li != null) {
+            li.hooks = this;
+        }
         // Matches from a dry run / test run are tried again in a normal run, and jobs that waited for your answer
         // are tried again once you answered.
         if (!args.dryRun) {
@@ -427,7 +429,7 @@ public final class Bot implements LinkedIn.Resolver, LinkedIn.Hooks {
             note = "LinkedIn daily limit";
         }
         if ("applied".equals(status)) {
-            recordSubmit(store.state(), perHour, Util.now());
+            recordSubmit(store.state(), hourCap(), Util.now());
             store.saveState();
             roundApplied++;
             int[] counts = appliedCounts(store.stateCopy(), Util.now());
@@ -456,10 +458,17 @@ public final class Bot implements LinkedIn.Resolver, LinkedIn.Hooks {
         return cap > 0 ? Math.min(perDay, cap) : perDay;
     }
 
+    /** Your hourly limit, or the admin's cap when that is lower. */
+    int hourCap() {
+        int cap = engine.account.maxPerHour();
+        return cap > 0 ? Math.min(perHour, cap) : perHour;
+    }
+
     /** Respect the hourly and daily limits. True if it waited long enough to reload the job. */
     boolean waitForSlot() {
         double now = Util.now();
         int perDay = dayCap();
+        int perHour = hourCap();
         Object[] w = slotWait(store.stateCopy(), perHour, perDay, now);
         double wait = (Double) w[0];
         if (wait <= 0) {
@@ -505,9 +514,19 @@ public final class Bot implements LinkedIn.Resolver, LinkedIn.Hooks {
         store.removeAnswer(Util.normKey(question));
     }
 
+    /** Filling a form you have open yourself (a company's site): never wait for a question card. */
+    public boolean neverAsk;
+
     @Override
     public boolean manual() {
-        return "ask".equals(Questions.askModeOf(Questions.askMode));
+        return !neverAsk && "ask".equals(Questions.askModeOf(Questions.askMode));
+    }
+
+    /** The job a form belongs to (used in the AI's answers). */
+    public void setJob(String title, String company) {
+        job = new LinkedHashMap<String, Object>();
+        job.put("title", title == null ? "" : title);
+        job.put("company", company == null ? "" : company);
     }
 
     @Override

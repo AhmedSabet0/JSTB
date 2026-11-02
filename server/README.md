@@ -1,13 +1,18 @@
 # Auto Apply server
 
-The server behind the Auto Apply Android app (version 2.0 and later).
+The server behind the Auto Apply Android app (version 2.0 and later; 3.0 adds the activity feed, jobs people apply to
+themselves, the announcement and required updates).
 
 - **Accounts**: people sign up in the app with an email and a password.
 - **AI proxy**: the app sends its AI requests here; the server adds the OpenRouter key and the model you choose in the
   admin page. The key never reaches a phone.
-- **Admin page** (`/admin`): every user, Pro on/off (Pro is needed to run auto apply), applications today / last 7 days /
-  all time, what each user's app is doing right now, **Stop** per user and **Stop everyone**, password reset, notes,
-  deleting users, and the AI settings (key, model, daily limits).
+- **Admin page** (`/admin`): every user, Pro on/off (Pro is needed for auto apply and the AI's help), applications
+  today / last 7 days / all time, what each user's app is doing right now, **Stop** per user and **Stop everyone**,
+  each user's own limits, password reset, notes, deleting users, the AI settings (key, model, daily limits), and:
+  - **Activity**: the lines each app shows its user (searches, every job and why it was sent or skipped, forms filled,
+    jobs added and marked applied, errors), live, for everyone or one user;
+  - **App versions**: which build and version each user has, a message shown on everyone's Home screen, and the oldest
+    version allowed (older apps show only an Update screen).
 - **Google Play pages**: `/privacy` (privacy policy) and `/delete-account` (account deletion on the web).
 
 Python (FastAPI) with SQLite, in Docker. Caddy in front gets the HTTPS certificate by itself.
@@ -66,8 +71,10 @@ The app asks for the server address on its first screen when none is built in. F
 the app so nobody has to type it:
 
 ```bash
-SERVER_URL=https://autoapply.example.com FLAVOR=play ./build.sh     # in autoapply-android
+SERVER_URL=https://autoapply.example.com FLAVOR=play ./build.sh     # in android/
 ```
+
+GitHub Actions does this with the `SERVER_URL` variable (top README).
 
 ## Using the admin page
 
@@ -82,20 +89,28 @@ SERVER_URL=https://autoapply.example.com FLAVOR=play ./build.sh     # in autoapp
 | Testers (Google Play closed test) | Settings → **New accounts start with Pro**, turn it off afterwards. |
 | Someone forgot their password | Their row → Details → **Reset password**, tell them the new one. |
 | Close sign-ups | Settings → turn off **Allow new accounts**. |
+| See what an app is doing | **Activity** tab (pick the user), or their row → Details. Live, every few seconds. |
+| Different limits for one user | Their row → Details → **Limits** (empty = the default). |
+| Sign someone out on all phones | Their row → Details → **Sign out everywhere**. |
+| Tell every user something | Settings → App → **Message on everyone's Home screen**. |
+| Force an update (a fix everybody needs) | Publish the new version first, then Settings → App → **Oldest version allowed** (GitHub build and Google Play build separately; the versions in use are listed there). |
 
-How "applied" is counted: the app reports every job it applies to (and the ones that got stuck or failed). The counts
-are what the app reported since the account was created. "Today" uses the time zone in `TIMEZONE` (default
+How "applied" is counted: the app reports every job it applies to (and the ones that got stuck or failed), and every job
+its user marked as applied (with the channel: auto, LinkedIn or a company site, and the stage). The counts are what the
+app reported since the account was created. "Today" uses the time zone in `TIMEZONE` (default
 Africa/Cairo).
 
 ## Updating the server
 
+GitHub Actions deploys every push to `server/` on `main` (top README). By hand, on the VM:
+
 ```bash
-cd autoapply-server
-git pull            # or copy the new files over
-docker compose up -d --build
+cd ~/autoapply-server
+# copy the new files over (keep .env), then:
+sudo docker compose up -d --build
 ```
 
-The database stays in the `data` Docker volume.
+The database stays in the `data` Docker volume; new columns and tables are added on start.
 
 ## Backups
 

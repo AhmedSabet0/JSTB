@@ -8,120 +8,251 @@ import java.util.Map;
 
 import static com.autoapply.bot.core.Util.log;
 
-/** While auto apply runs: tells the server what it is doing every half minute (and right after each application),
- *  and stops the run when the server says so (the admin pressed Stop, or turned Pro off). */
+/** Keeps the server up to date: what the app is doing (the activity lines you see in the app), each job it applied to
+ *  or could not finish, and the jobs you track yourself. While auto apply runs it reports every half minute (and right
+ *  after each application) and stops the run when the server says so (the admin pressed Stop, or turned Pro off).
+ *  Otherwise it sends what is new every couple of minutes. What cannot be sent waits in report_queue.json. */
 public final class Reporter implements Store.Listener {
     static final List<String> KEPT = Arrays.asList("applied", "error", "stuck", "needs_answer");
-    /** Seconds between reports (tests use less). */
+    /** Seconds between reports while auto apply runs (tests use less). */
     public static volatile double every = 30;
-    /** Without any contact for this long the run stops: the admin must be able to stop it. */
+    /** Seconds between reports otherwise, when there is something to send. */
+    public static volatile double idleEvery = 120;
+    /** Without any contact for this long a run stops: the admin must be able to stop it. */
     public static volatile double giveUpAfter = 600;
 
     private final Engine engine;
     private final Account account;
-    private final String mode;
     private final File queueFile;
     private final List<Map<String, Object>> queue = new ArrayList<Map<String, Object>>();
     private final Object lock = new Object();
-    private volatile boolean done;
-    private boolean finished;
-    private boolean started;
-    private double lastOk;
     private Thread thread;
+    private volatile boolean running;
+    private volatile String mode = "";
+    private boolean startPending;
+    private boolean endPending;
+    private double lastOk;
+    private long logSeq;
 
-    Reporter(Engine engine, Account account, String mode) {
+    Reporter(Engine engine, Account account) {
         this.engine = engine;
         this.account = account;
-        this.mode = mode;
         this.queueFile = new File(engine.config.dir, "report_queue.json");
-        for (Object o : Json.arr(Json.tryParse(Util.readText(queueFile)))) {  // not sent at the end of the last run
+        for (Object o : Json.arr(Json.tryParse(Util.readText(queueFile)))) {  // not sent before the app closed
             if (o instanceof Map) {
                 queue.add(Json.map(o));
             }
         }
     }
 
-    void start() {
-        lastOk = Util.now();
-        engine.store.listener = this;
-        thread = new Thread(new Runnable() {
-            @Override
-            public void run() {
-                loop();
+    /** Starts the background sender (once). */
+    void ensureStarted() {
+        synchronized (lock) {
+            if (thread != null && thread.isAlive()) {
+                return;
             }
-        }, "report");
-        thread.setDaemon(true);
-        thread.start();
+            thread = new Thread(new Runnable() {
+                @Override
+                public void run() {
+                    loop();
+                }
+            }, "report");
+            thread.setDaemon(true);
+            thread.start();
+        }
     }
 
+    // ------------------------------------------------------------------ what to send
+    void runStarted(String runMode) {
+        synchronized (lock) {
+            running = true;
+            mode = runMode;
+            startPending = true;
+            endPending = false;
+            retryAt = 0;
+            lastOk = Util.now();
+            engine.store.listener = this;
+            lock.notifyAll();
+        }
+        ensureStarted();
+    }
+
+    void runEnded() {
+        synchronized (lock) {
+            if (!running) {
+                return;
+            }
+            running = false;
+            endPending = true;
+            retryAt = 0;
+            if (engine.store.listener == this) {
+                engine.store.listener = null;
+            }
+            lock.notifyAll();
+        }
+    }
+
+    boolean runActive() {
+        return running;
+    }
+
+    /** A job outcome of auto apply. */
     @Override
     public void onJob(Map<String, Object> job) {
         String status = Json.str(job, "status");
         if (!KEPT.contains(status)) {
             return;
         }
-        synchronized (lock) {
-            queue.add(Json.obj("job_id", Json.str(job, "id"), "title", Util.cut(Json.str(job, "title"), 200),
-                    "company", Util.cut(Json.str(job, "company"), 120), "status", status, "score", job.get("score"),
-                    "at", Json.dbl(job, "ts", Util.now())));
-            if ("applied".equals(status)) {
-                lock.notifyAll();  // the admin sees it right away
-            }
-        }
+        add(Json.obj("job_id", Json.str(job, "id"), "title", Util.cut(Json.str(job, "title"), 200),
+                "company", Util.cut(Json.str(job, "company"), 120), "status", status, "score", job.get("score"),
+                "at", Json.dbl(job, "ts", Util.now()), "channel", "auto", "url", Json.str(job, "url")),
+                "applied".equals(status));
     }
 
+    /** A job you applied to yourself (with the app's help), or a new stage for one: interview, offer... */
+    public void track(Map<String, Object> event) {
+        add(event, true);
+    }
+
+    private void add(Map<String, Object> event, boolean now) {
+        synchronized (lock) {
+            queue.add(event);
+            while (queue.size() > 500) {
+                queue.remove(0);
+            }
+            Util.writeText(queueFile, Json.stringify(queue));
+            if (now) {
+                urgent = true;
+                retryAt = 0;
+                lock.notifyAll();
+            }
+        }
+        ensureStarted();
+    }
+
+    // ------------------------------------------------------------------ the sender
+    private boolean urgent;
+    private double retryAt;
+
     private void loop() {
-        while (!done) {
-            send(true);
+        double lastSend = 0;
+        while (true) {
+            boolean go;
             synchronized (lock) {
-                if (!done) {
+                double interval = running ? every : idleEvery;
+                boolean pressing = startPending || endPending || urgent;
+                double until = pressing ? retryAt : lastSend + interval;
+                long ms = (long) ((until - Util.now()) * 1000);
+                if (ms > 0) {
                     try {
-                        lock.wait((long) (every * 1000));
+                        lock.wait(ms);
                     } catch (InterruptedException e) {
                         return;
                     }
+                    continue;  // woken early (something new) or the time came: look again
+                }
+                boolean due = Util.now() - lastSend >= interval - 0.05;
+                go = startPending || endPending || urgent || (due && (running || !queue.isEmpty() || hasNewLog()));
+                urgent = false;
+                if (!go) {
+                    lastSend = Util.now();  // nothing to send this round
                 }
             }
+            if (!go) {
+                continue;
+            }
+            if (account.signedIn()) {
+                if (!send()) {
+                    synchronized (lock) {
+                        retryAt = Util.now() + Math.min(every, 30);
+                    }
+                }
+            } else {
+                synchronized (lock) {
+                    startPending = false;
+                    endPending = false;
+                }
+            }
+            lastSend = Util.now();
         }
     }
 
-    private boolean send(boolean running) {
+    private boolean hasNewLog() {
+        return !Json.arr(Util.logSince(logSeq).get("lines")).isEmpty();
+    }
+
+    /** One report. False when the server could not be reached. */
+    boolean send() {
         List<Map<String, Object>> events;
+        boolean isRunning;
+        boolean isStart;
+        boolean isEnd;
+        String runMode;
         synchronized (lock) {
             events = new ArrayList<Map<String, Object>>(queue);
+            isRunning = running;
+            isStart = startPending;
+            isEnd = endPending;
+            runMode = mode;
+        }
+        Map<String, Object> since = Util.logSince(logSeq);
+        List<Object> lines = Json.arr(since.get("lines"));
+        if (lines.size() > 300) {
+            lines = new ArrayList<Object>(lines.subList(0, 300));
+        }
+        List<Object> log = new ArrayList<Object>();
+        long upTo = logSeq;
+        for (Object o : lines) {
+            Map<String, Object> l = Json.map(o);
+            log.add(Json.obj("at", Json.dbl(l, "t", Util.now()), "text", Util.cut(Json.str(l, "text"), 600)));
+            upTo = Math.max(upTo, (long) Json.num(l, "seq", 0));
         }
         Map<String, Object> st = Util.getStatus();
         int[] counts = Bot.appliedCounts(engine.store.stateCopy(), Util.now());
-        Map<String, Object> body = Json.obj("start", running && !started, "running", running, "mode", mode,
-                "message", Util.cut(Json.str(st, "message"), 200), "applied_today", counts[1],
+        Map<String, Object> body = Json.obj("start", isRunning && isStart, "running", isRunning, "mode", runMode,
+                "message", Util.cut(isRunning || isEnd ? Json.str(st, "message") : "", 200), "applied_today", counts[1],
                 "applied_total", engine.store.count("applied"), "app_version", Account.appVersion, "device", Account.device,
-                "events", events);
+                "events", events, "log", log);
         try {
             Map<String, Object> r = account.report(body);
-            if (running) {
-                started = true;
-            }
             lastOk = Util.now();
+            logSeq = upTo;
             synchronized (lock) {
                 queue.subList(0, Math.min(events.size(), queue.size())).clear();
+                if (queue.isEmpty()) {
+                    queueFile.delete();
+                } else {
+                    Util.writeText(queueFile, Json.stringify(queue));
+                }
+                if (isStart) {
+                    startPending = false;
+                }
+                if (isEnd) {
+                    endPending = false;
+                }
             }
-            account.learned(Json.bool(r, "pro"), (int) Json.num(r, "max_per_day", 0));
-            if (running && !done && Json.bool(r, "stop")) {
+            account.learned(r);
+            if (isRunning && running && Json.bool(r, "stop")) {
                 String why = Json.str(r, "reason");
                 stopRun(why.isEmpty() ? "Stopped by the admin." : why);
             }
             return true;
         } catch (Account.AuthError e) {
-            if (running && !done) {
+            synchronized (lock) {
+                startPending = false;
+                endPending = false;
+            }
+            if (isRunning && running) {
                 stopRun("You were signed out of your Auto Apply account. Sign in again in Settings.");
             }
+            return true;  // nothing to retry until you sign in again
         } catch (RuntimeException e) {
-            if (running && !done && Util.now() - lastOk > giveUpAfter) {
+            if (isRunning && running && Util.now() - lastOk > giveUpAfter) {
                 stopRun("Lost contact with the Auto Apply server for " + Math.round(giveUpAfter / 60) + " minutes. Start again "
                         + "when the internet is back.");
             }
+            return false;
         }
-        return false;
     }
 
     private void stopRun(String why) {
@@ -130,41 +261,5 @@ public final class Reporter implements Store.Listener {
             log(why);
         }
         engine.stop();
-    }
-
-    /** The run ended: one last report (in the background); what cannot be sent now goes with the next run. */
-    synchronized void finish() {
-        if (finished) {
-            return;
-        }
-        finished = true;
-        done = true;
-        synchronized (lock) {
-            lock.notifyAll();
-        }
-        if (engine.store.listener == this) {
-            engine.store.listener = null;
-        }
-        final Thread t = thread;
-        new Thread(new Runnable() {
-            @Override
-            public void run() {
-                try {
-                    if (t != null) {
-                        t.join(45000);
-                    }
-                } catch (InterruptedException e) {
-                    // send anyway
-                }
-                boolean sent = send(false);
-                synchronized (lock) {
-                    if (sent || queue.isEmpty()) {
-                        queueFile.delete();
-                    } else {
-                        Util.writeText(queueFile, Json.stringify(queue));
-                    }
-                }
-            }
-        }, "report-end").start();
     }
 }
