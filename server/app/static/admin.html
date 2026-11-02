@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Auto Apply admin</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="/admin/static/admin.css">
+</head>
+<body>
+
+<!-- ============================================================ SIGN IN -->
+<section id="v-login" class="login" hidden>
+  <form id="login-form" class="login-card" autocomplete="off">
+    <div class="brand"><svg class="logo" viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="16"/><path d="M15 31 49 16 38 49 31 37z"/></svg><b>Auto Apply admin</b></div>
+    <label for="login-pw">Admin password</label>
+    <input id="login-pw" type="password" autocomplete="current-password" required>
+    <p id="login-err" class="error-msg" hidden></p>
+    <button class="btn primary wide" type="submit">Sign in</button>
+  </form>
+</section>
+
+<!-- ============================================================ APP -->
+<div id="v-app" hidden>
+  <header class="topbar">
+    <div class="brand"><svg class="logo" viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="16"/><path d="M15 31 49 16 38 49 31 37z"/></svg><b>Auto Apply admin</b></div>
+    <nav class="tabs" role="tablist">
+      <button class="tab" data-tab="users" role="tab" type="button">Users</button>
+      <button class="tab" data-tab="settings" role="tab" type="button">Settings</button>
+    </nav>
+    <div class="top-actions">
+      <button id="btn-stop-all" class="btn stop" type="button">Stop everyone</button>
+      <button id="btn-logout" class="btn ghost" type="button">Sign out</button>
+    </div>
+  </header>
+
+  <main>
+    <!-- -------------------------------------------------------- USERS -->
+    <section id="t-users" class="tabpane">
+      <div id="setup-warn" class="banner" hidden></div>
+      <div class="tiles">
+        <div class="tile"><b id="k-users">0</b><span>users</span><small id="k-pro"></small></div>
+        <div class="tile live"><b id="k-running">0</b><span>applying now</span></div>
+        <div class="tile good"><b id="k-today">0</b><span>applied today</span></div>
+        <div class="tile"><b id="k-week">0</b><span>last 7 days</span></div>
+        <div class="tile"><b id="k-total">0</b><span>all time</span></div>
+        <div class="tile"><b id="k-ai">0</b><span>AI requests today</span><small id="k-tokens"></small></div>
+      </div>
+
+      <div class="toolbar">
+        <input id="q" type="search" placeholder="Search by name or email" aria-label="Search users">
+        <div class="chips" role="radiogroup" aria-label="Show">
+          <button class="chip on" data-filter="all" type="button">All</button>
+          <button class="chip" data-filter="running" type="button">Applying now</button>
+          <button class="chip" data-filter="pro" type="button">Pro</button>
+          <button class="chip" data-filter="free" type="button">Not Pro</button>
+        </div>
+      </div>
+
+      <div class="table" id="users-table">
+        <div class="thead">
+          <span>User</span><span>Now</span><span class="num">Today</span><span class="num">7 days</span>
+          <span class="num">Total</span><span class="num">AI today</span><span>Pro</span><span></span>
+        </div>
+        <div id="users"></div>
+      </div>
+      <p id="users-empty" class="empty" hidden></p>
+      <p class="hint foot">Stop ends the run that is going now; the user can start again. To keep someone from starting, turn Pro off.</p>
+    </section>
+
+    <!-- -------------------------------------------------------- SETTINGS -->
+    <section id="t-settings" class="tabpane" hidden>
+      <div class="cards">
+        <form class="card" id="f-ai" autocomplete="off">
+          <h2>AI</h2>
+          <p class="hint">The app never sees this key: every AI request goes through this server, which adds the key and the model.</p>
+          <label for="s-key">OpenRouter key</label>
+          <input id="s-key" type="password" spellcheck="false" placeholder="sk-or-v1-…">
+          <p id="s-key-state" class="hint"></p>
+          <label for="s-model">Model</label>
+          <input id="s-model" type="text" spellcheck="false" list="models" placeholder="openai/gpt-4o-mini">
+          <datalist id="models">
+            <option value="openai/gpt-4o-mini"></option>
+            <option value="openai/gpt-4.1-mini"></option>
+            <option value="google/gemini-2.0-flash-001"></option>
+            <option value="anthropic/claude-3.5-haiku"></option>
+            <option value="deepseek/deepseek-chat"></option>
+          </datalist>
+          <p class="hint">Use the name from openrouter.ai/models. Cheaper models keep costs low; the app's prompts are short.</p>
+          <div class="row">
+            <button class="btn primary" type="submit">Save</button>
+            <button id="btn-test-ai" class="btn" type="button">Check the AI</button>
+            <button id="btn-clear-key" class="btn ghost" type="button">Remove key</button>
+          </div>
+          <p id="test-out" class="hint" aria-live="polite"></p>
+        </form>
+
+        <form class="card" id="f-limits" autocomplete="off">
+          <h2>Limits</h2>
+          <div class="cols">
+            <div><label for="s-free">AI requests a day, not Pro</label>
+              <input id="s-free" type="number" min="0" max="5000" inputmode="numeric">
+              <p class="hint">Enough to read a CV during setup (about 3 requests).</p></div>
+            <div><label for="s-pro">AI requests a day, Pro</label>
+              <input id="s-pro" type="number" min="1" max="50000" inputmode="numeric">
+              <p class="hint">One application uses about 2 to 8.</p></div>
+          </div>
+          <label for="s-cap">Applications a day, each user</label>
+          <input id="s-cap" type="number" min="0" max="300" inputmode="numeric">
+          <p class="hint">0 lets each user's own setting decide. Otherwise the app sends at most this many a day.</p>
+          <button class="btn primary" type="submit">Save</button>
+        </form>
+
+        <form class="card" id="f-accounts" autocomplete="off">
+          <h2>New accounts</h2>
+          <label class="switch-row"><input id="s-signups" type="checkbox"><span class="switch" aria-hidden="true"></span>
+            <span><b>Allow new accounts</b><small>Turn off to stop sign-ups from the app.</small></span></label>
+          <label class="switch-row"><input id="s-autopro" type="checkbox"><span class="switch" aria-hidden="true"></span>
+            <span><b>New accounts start with Pro</b><small>Handy while testers try the app (Google Play closed testing).</small></span></label>
+          <button class="btn primary" type="submit">Save</button>
+        </form>
+
+        <div class="card">
+          <h2>Links for Google Play</h2>
+          <p class="hint">Paste these in Play Console: App content &rarr; Privacy policy, and Data safety &rarr; Data deletion.</p>
+          <div class="link-row"><code id="l-privacy"></code><button class="btn" data-copy="l-privacy" type="button">Copy</button></div>
+          <div class="link-row"><code id="l-delete"></code><button class="btn" data-copy="l-delete" type="button">Copy</button></div>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<!-- ============================================================ USER DETAILS -->
+<div id="drawer" class="drawer" hidden>
+  <div class="drawer-back" data-close></div>
+  <aside class="drawer-panel" role="dialog" aria-modal="true" aria-labelledby="d-name">
+    <header class="drawer-head">
+      <div><h2 id="d-name"></h2><p id="d-email" class="muted"></p></div>
+      <button class="icon-btn" data-close type="button" aria-label="Close">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 6.4 17.6 5 12 10.6 6.4 5 5 6.4 10.6 12 5 17.6 6.4 19 12 13.4 17.6 19 19 17.6 13.4 12z"/></svg></button>
+    </header>
+    <div class="drawer-body">
+      <div id="d-state" class="d-state"></div>
+      <div class="d-actions">
+        <label class="switch-row"><input id="d-pro" type="checkbox"><span class="switch" aria-hidden="true"></span><span><b>Pro</b><small>Can run auto apply.</small></span></label>
+        <button id="d-stop" class="btn stop" type="button">Stop now</button>
+      </div>
+      <dl id="d-facts" class="facts"></dl>
+
+      <h3>Recent applications</h3>
+      <ul id="d-apps" class="apps"></ul>
+
+      <h3>Note</h3>
+      <textarea id="d-note" rows="2" placeholder="Only you see this (paid until…, company…)"></textarea>
+      <button id="d-note-save" class="btn" type="button">Save note</button>
+
+      <h3>Reset password</h3>
+      <p class="hint">Sets a new password and signs the user out on every phone. Tell them the new one.</p>
+      <div class="row"><input id="d-pw" type="text" autocomplete="off" spellcheck="false" placeholder="New password (8+ characters)">
+        <button id="d-pw-save" class="btn" type="button">Set</button></div>
+
+      <h3 class="danger-title">Delete user</h3>
+      <p class="hint">Deletes the account and everything the app reported for it.</p>
+      <button id="d-del" class="btn danger" type="button">Delete this user</button>
+      <div id="d-del-confirm" class="confirm" hidden>
+        <span>Delete <b id="d-del-email"></b> for good?</span>
+        <div class="row"><button id="d-del-yes" class="btn danger" type="button">Yes, delete</button><button id="d-del-no" class="btn" type="button">Keep</button></div>
+      </div>
+    </div>
+  </aside>
+</div>
+
+<div id="toast" class="toast" role="status" hidden></div>
+<script src="/admin/static/admin.js"></script>
+</body>
+</html>

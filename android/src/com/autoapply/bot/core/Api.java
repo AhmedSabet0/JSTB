@@ -1,0 +1,658 @@
+package com.autoapply.bot.core;
+
+import java.io.File;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+
+/** The dashboard's API: the same endpoints as the PC version's app.py, answered in-process. */
+public final class Api {
+    public static final String[] SETTINGS_KEYS = {"KEYWORDS", "LOCATION", "DATE_POSTED", "WORK_TYPE", "EXPERIENCE",
+        "PAGES_PER_KEYWORD", "SEARCH_EVERY_MIN", "PER_HOUR", "PER_DAY", "MIN_SCORE", "SKIP_COMPANIES", "SKIP_TITLE_WORDS",
+        "NEW_QUESTIONS", "ASK_TIMEOUT_MIN", "UPDATE_SOURCE"};
+
+    private final Engine engine;
+    private final java.io.File updateFile;
+    private final java.io.File suggestFile;
+    private volatile Map<String, Object> lastCheck;
+    private volatile boolean checking = false;
+
+    public Api(Engine engine) {
+        this.engine = engine;
+        this.updateFile = new java.io.File(engine.config.dir, "update_check.json");
+        this.suggestFile = new java.io.File(engine.config.dir, "profile_suggest.json");
+        Object saved = Json.tryParse(Util.readText(updateFile));
+        this.lastCheck = saved instanceof Map ? Json.map(saved) : null;
+    }
+
+    /** Handle one request. `body` is null for GET. Returns JSON text; errors come back as {"ok": false, "error": ...}. */
+    public String handle(String path, String body) {
+        try {
+            String p = path;
+            String query = "";
+            int qi = path.indexOf('?');
+            if (qi >= 0) {
+                p = path.substring(0, qi);
+                query = path.substring(qi + 1);
+            }
+            Map<String, Object> b = body == null ? null : Json.map(Json.tryParse(body));
+            Object out = b == null ? get(p, query) : post(p, b);
+            if (out == null) {
+                return Json.stringify(Json.obj("ok", false, "error", "Unknown request " + p));
+            }
+            return Json.stringify(out);
+        } catch (IllegalArgumentException e) {
+            return Json.stringify(Json.obj("ok", false, "error", e.getMessage()));
+        } catch (RuntimeException e) {
+            return Json.stringify(Json.obj("ok", false, "error", Util.shortError(e)));
+        }
+    }
+
+    // ------------------------------------------------------------------ GET
+    private Object get(String p, String query) {
+        if (p.equals("/api/state")) {
+            return state();
+        }
+        if (p.equals("/api/log")) {
+            long since = 0;
+            for (String kv : query.split("&")) {
+                if (kv.startsWith("since=")) {
+                    try {
+                        since = Long.parseLong(kv.substring(6));
+                    } catch (NumberFormatException e) {
+                        since = 0;
+                    }
+                }
+            }
+            return Util.logSince(since);
+        }
+        if (p.equals("/api/jobs")) {
+            return Json.obj("jobs", engine.store.rows(1500));
+        }
+        if (p.equals("/api/settings")) {
+            return settings();
+        }
+        if (p.equals("/api/answers")) {
+            return Json.obj("answers", engine.store.answersCopy());
+        }
+        if (p.equals("/api/update")) {
+            return updateInfo();
+        }
+        if (p.equals("/api/profile")) {
+            return profileInfo();
+        }
+        if (p.equals("/api/facts")) {
+            return factsInfo();
+        }
+        if (p.equals("/api/open-questions")) {
+            List<Map<String, Object>> items = engine.waiting.all();
+            Collections.sort(items, new Comparator<Map<String, Object>>() {
+                @Override
+                public int compare(Map<String, Object> a, Map<String, Object> b) {
+                    return Double.compare(Json.dbl(b, "updated", 0), Json.dbl(a, "updated", 0));
+                }
+            });
+            return Json.obj("items", items);
+        }
+        return null;
+    }
+
+    public Map<String, Object> state() {
+        Map<String, String> cfg = engine.config.load();
+        boolean running = engine.running();
+        int[] counts = Bot.appliedCounts(engine.store.stateCopy(), Util.now());
+        Session s = engine.session;
+        Bot.Options opts = engine.options();
+        Map<String, Object> setup = setupStatus(cfg);
+        int perDay = Config.cfgInt(cfg, "PER_DAY", 1, 300);
+        int cap = engine.account.maxPerDay();
+        return Json.obj(
+                "running", running,
+                "options", opts == null ? null : opts.toMap(),
+                "status", Util.getStatus(),
+                "now", Util.now(),
+                "stats", Json.obj("today", counts[1], "hour", counts[0], "total", engine.store.count("applied"),
+                        "week", engine.store.countSince("applied", Util.now() - 7 * 86400),
+                        "per_hour", Config.cfgInt(cfg, "PER_HOUR", 1, 30), "per_day", cap > 0 ? Math.min(cap, perDay) : perDay,
+                        "admin_cap", cap,
+                        "min_score", Config.cfgInt(cfg, "MIN_SCORE", 0, 10)),
+                "setup", setup,
+                "session", s == null ? null : s.summary(),
+                "last_session", Json.tryParse(Util.readText(engine.summaryFile)),
+                "debug_zip", engine.debugZip.isFile(),
+                "question", running ? Questions.DESK.get() : null,
+                "open_questions", engine.waiting.count(),
+                "facts", engine.store.factCount(),
+                "ask_mode", running ? Questions.askModeOf(Questions.askMode) : Questions.askModeOf(cfg.get("NEW_QUESTIONS")),
+                "ask_timeout_min", running ? Questions.askTimeoutMin : Config.cfgInt(cfg, "ASK_TIMEOUT_MIN", 0, 1440),
+                "permissions", engine.platform.permissions(),
+                "update", updateInfo(),
+                "recent", engine.store.recent("applied", 0, 6),
+                "account", engine.account.info(),
+                "build", engine.platform.buildInfo(),
+                "platform", "android");
+    }
+
+    // ------------------------------------------------------------------ app updates
+    boolean selfUpdates() {
+        return Json.bool(engine.platform.buildInfo(), "self_update");
+    }
+
+    public Map<String, Object> updateInfo() {
+        Map<String, Object> current = engine.platform.appVersion();
+        if (!selfUpdates()) {  // the Google Play build: Play updates it
+            return Json.obj("current", current, "disabled", true);
+        }
+        Map<String, Object> last = lastCheck;
+        if (last != null && Json.bool(last, "available")
+                && Updater.compare(Json.str(last, "version"), Json.str(current, "name")) <= 0) {
+            last = null;  // already installed
+        }
+        return Json.obj("current", current, "checking", checking, "last", last, "download", engine.platform.updateState(),
+                "source", engine.config.load().get("UPDATE_SOURCE"));
+    }
+
+    /** Check in the background (auto checks run at most every 6 hours). */
+    void startUpdateCheck(boolean force) {
+        Map<String, Object> last = lastCheck;
+        if (!selfUpdates() || checking || (!force && last != null && Util.now() - Json.dbl(last, "checked_at", 0) < 6 * 3600)) {
+            return;
+        }
+        checking = true;
+        final String source = engine.config.load().get("UPDATE_SOURCE");
+        final String current = Json.str(engine.platform.appVersion(), "name");
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    Map<String, Object> r = Updater.check(source, current);
+                    lastCheck = r;
+                    Util.writeText(updateFile, Json.pretty(r));
+                } finally {
+                    checking = false;
+                }
+            }
+        }, "update-check").start();
+    }
+
+    private Map<String, Object> settings() {
+        Map<String, String> cfg = engine.config.load();
+        Map<String, Object> data = Json.obj();
+        for (String k : SETTINGS_KEYS) {
+            data.put(k, cfg.get(k) == null ? "" : cfg.get(k));
+        }
+        String about = Util.readText(engine.config.aboutFile);
+        data.put("ABOUT_ME", about == null ? "" : about);
+        data.put("setup", setupStatus(cfg));
+        return data;
+    }
+
+    /** What is set up: your account, CV, LinkedIn sign-in, setup answers, job titles, and whether you finished the setup. */
+    private Map<String, Object> setupStatus(Map<String, String> cfg) {
+        Map<String, Object> setup = engine.config.status(cfg);
+        setup.put("account", engine.account.signedIn());
+        setup.put("pro", engine.account.pro());
+        setup.put("signed_in", engine.platform.signedIn());
+        setup.put("profile_done", Json.bool(engine.profile.load(), "done"));
+        setup.put("has_search", !Util.splitList(cfg.get("KEYWORDS")).isEmpty());
+        setup.put("location", cfg.get("LOCATION") == null ? "" : cfg.get("LOCATION"));
+        setup.put("setup_done", "1".equals(cfg.get("SETUP_DONE")));
+        return setup;
+    }
+
+    // ------------------------------------------------------------------ setup answers
+    private Map<String, Object> profileInfo() {
+        Map<String, Object> prof = engine.profile.load();
+        Map<String, Object> cached = Json.map(Json.tryParse(Util.readText(suggestFile)));
+        boolean fresh = Json.num(cached, "cv_chars", -1) == engine.config.cvText().length();
+        return Json.obj("profile", prof, "years", Profile.yearsSince(Json.str(prof, "graduation_year"), Util.now()),
+                "suggest", fresh ? cached.get("data") : null, "notes", engine.notesForAi(),
+                "currencies", java.util.Arrays.asList(Profile.CURRENCIES), "english", java.util.Arrays.asList(Profile.ENGLISH),
+                "military", java.util.Arrays.asList(Profile.MILITARY));
+    }
+
+    /** Older answers (and the AI's) that your main answers now cover are dropped, so the main answers are used for
+     *  them. Facts you entered or answered yourself stay. */
+    private int dropCoveredAnswers() {
+        String cv = engine.config.cvText();
+        int dropped = 0;
+        for (Map<String, Object> f : engine.store.factsCopy()) {
+            if ("you".equals(Json.str(f, "source"))) {
+                continue;
+            }
+            List<String> texts = Json.strings(f.get("asked"));
+            texts.add(Json.str(f, "label"));
+            for (String t : texts) {
+                if (engine.profile.answer(t, "text", null, cv, Util.now()) != null) {
+                    if (engine.store.deleteFact(Json.str(f, "id"))) {
+                        dropped++;
+                    }
+                    break;
+                }
+            }
+        }
+        return dropped;
+    }
+
+    // ------------------------------------------------------------------ your info
+    private Map<String, Object> factsInfo() {
+        List<Map<String, Object>> facts = engine.store.factsCopy();
+        final List<String> order = java.util.Arrays.asList(Facts.CATEGORIES);
+        Collections.sort(facts, new Comparator<Map<String, Object>>() {
+            @Override
+            public int compare(Map<String, Object> a, Map<String, Object> b) {
+                int c = order.indexOf(Json.str(a, "category")) - order.indexOf(Json.str(b, "category"));
+                return c != 0 ? c : Json.str(a, "label").compareToIgnoreCase(Json.str(b, "label"));
+            }
+        });
+        return Json.obj("categories", order, "facts", facts, "count", facts.size());
+    }
+
+    private Object changeFacts(Map<String, Object> b) {
+        String op = Json.str(b, "op");
+        if (op.equals("add")) {
+            String label = Json.str(b, "label").trim();
+            Object value = b.get("value");
+            if (label.isEmpty() || value == null || Facts.answerText(value).trim().isEmpty()) {
+                throw new IllegalArgumentException("Type the question (or the skill) and the answer.");
+            }
+            String category = Json.str(b, "category").isEmpty() ? Facts.categorize(label) : Json.str(b, "category");
+            Map<String, Object> f = engine.store.addFact(category, label, value instanceof String ? ((String) value).trim() : value);
+            Map<String, Object> out = factsInfo();
+            out.put("ok", true);
+            out.put("fact", f);
+            return out;
+        }
+        if (op.equals("update")) {
+            Map<String, Object> changes = Json.obj();
+            for (String k : new String[]{"value", "label", "category"}) {
+                if (b.containsKey(k)) {
+                    changes.put(k, b.get(k) instanceof String ? ((String) b.get(k)).trim() : b.get(k));
+                }
+            }
+            if (changes.containsKey("value") && Facts.answerText(changes.get("value")).trim().isEmpty()) {
+                throw new IllegalArgumentException("An answer cannot be empty. Delete the fact instead.");
+            }
+            if (engine.store.updateFact(Json.str(b, "id"), changes) == null) {
+                throw new IllegalArgumentException("This fact is not there any more.");
+            }
+        } else if (op.equals("delete")) {
+            engine.store.deleteFact(Json.str(b, "id"));
+        } else {
+            throw new IllegalArgumentException("Unknown change: " + op);
+        }
+        Map<String, Object> out = factsInfo();
+        out.put("ok", true);
+        return out;
+    }
+
+    /** Read phone, city, graduation year, English level and job titles from the CV (AI, with a simple fallback). */
+    private Object suggestProfile(boolean force) {
+        String cv = engine.config.cvText();
+        if (cv.length() < 150) {
+            throw new IllegalArgumentException("Add your CV first.");
+        }
+        Map<String, Object> cached = Json.map(Json.tryParse(Util.readText(suggestFile)));
+        if (!force && Json.num(cached, "cv_chars", -1) == cv.length() && cached.get("data") instanceof Map) {
+            return Json.obj("ok", true, "suggest", cached.get("data"));
+        }
+        Map<String, Object> data;
+        String problem = "";
+        if (!engine.account.signedIn()) {
+            data = Profile.fromCvText(cv);
+            problem = "Sign in to your account so the AI can read more from your CV.";
+        } else {
+            try {
+                data = engine.newAi(cv, "", "setup").profileFromCv();
+            } catch (Ai.FatalAIError e) {
+                data = Profile.fromCvText(cv);
+                problem = e.getMessage();
+            } catch (RuntimeException e) {
+                data = Profile.fromCvText(cv);
+                problem = "Could not reach the AI (" + Util.shortError(e, 80) + ").";
+            }
+            Map<String, Object> simple = Profile.fromCvText(cv);
+            for (String k : new String[]{"phone", "graduation_year"}) {
+                if (Json.str(data, k).isEmpty()) {
+                    data.put(k, simple.get(k));
+                }
+            }
+        }
+        if (problem.isEmpty()) {
+            Util.writeText(suggestFile, Json.pretty(Json.obj("cv_chars", cv.length(), "at", Util.now(), "data", data)));
+        }
+        return Json.obj("ok", true, "suggest", data, "problem", problem);
+    }
+
+    // ------------------------------------------------------------------ POST
+    private Object post(String p, Map<String, Object> b) {
+        if (p.equals("/api/start")) {
+            Bot.Options o = new Bot.Options();
+            String mode = Json.str(b, "mode");
+            o.dryRun = "dry".equals(mode);
+            o.noSubmit = "test".equals(mode);
+            o.once = Json.bool(b, "once");
+            o.retryFailed = Json.bool(b, "retry");
+            String err = engine.start(o);
+            return Json.obj("ok", err.isEmpty(), "error", err);
+        }
+        if (p.equals("/api/stop")) {
+            engine.stop();
+            return Json.obj("ok", true);
+        }
+        if (p.equals("/api/settings")) {
+            saveSettings(b);
+            return Json.obj("ok", true, "running", engine.running());
+        }
+        if (p.startsWith("/api/account/")) {
+            return account(p.substring("/api/account/".length()), b);
+        }
+        if (p.equals("/api/cv")) {
+            return saveCv(b);
+        }
+        if (p.equals("/api/profile")) {
+            engine.profile.save(Json.map(b.get("profile")));
+            int replaced = dropCoveredAnswers();
+            Map<String, Object> out = profileInfo();
+            out.put("ok", true);
+            out.put("replaced", replaced);
+            return out;
+        }
+        if (p.equals("/api/facts")) {
+            return changeFacts(b);
+        }
+        if (p.equals("/api/profile/suggest")) {
+            return suggestProfile(Json.bool(b, "force"));
+        }
+        if (p.equals("/api/setup")) {
+            engine.config.set("SETUP_DONE", Json.bool(b, "done") ? "1" : "");
+            return Json.obj("ok", true, "setup", setupStatus(engine.config.load()));
+        }
+        if (p.equals("/api/test-ai")) {
+            return testAi(b);
+        }
+        if (p.equals("/api/answers")) {
+            int n;
+            if (b.get("answers") instanceof Map) {
+                n = engine.store.updateAnswers(Json.map(b.get("answers")), null, true);
+            } else {
+                n = engine.store.updateAnswers(Json.map(b.get("set")), Json.strings(b.get("delete")), Json.bool(b, "clear"));
+            }
+            return Json.obj("ok", true, "count", n);
+        }
+        if (p.equals("/api/answer")) {  // your answer to the question the bot is waiting on
+            String err = Questions.DESK.respond(Json.str(b, "id"), "answer", b.get("answer"),
+                    !b.containsKey("remember") || Json.bool(b, "remember"));
+            if (!err.isEmpty()) {
+                throw new IllegalArgumentException(err);
+            }
+            return Json.obj("ok", true);
+        }
+        if (p.equals("/api/skip-question")) {
+            String err = Questions.DESK.respond(Json.str(b, "id"), "skip", null, false);
+            if (!err.isEmpty()) {
+                throw new IllegalArgumentException(err);
+            }
+            return Json.obj("ok", true);
+        }
+        if (p.equals("/api/open-questions")) {
+            String key = Util.normKey(Json.str(b, "key"));
+            if (Json.bool(b, "dismiss")) {
+                return Json.obj("ok", engine.waiting.pop(key) != null);
+            }
+            return answerWaiting(key, b.get("answer"));
+        }
+        if (p.equals("/api/ask-mode")) {
+            return Json.obj("ok", true, "ask_mode", setAskMode(Json.str(b, "mode")));
+        }
+        if (p.equals("/api/here")) {  // the dashboard is in use: you are around to answer questions
+            Questions.DESK.markPresent();
+            return Json.obj("ok", true);
+        }
+        // ---- phone-only actions
+        if (p.equals("/api/linkedin")) {
+            engine.platform.openSignIn();
+            return Json.obj("ok", true);
+        }
+        if (p.equals("/api/signed-in")) {
+            engine.signInDone();
+            return Json.obj("ok", true, "signed_in", engine.platform.signedIn());
+        }
+        if (p.equals("/api/share")) {
+            return share(Json.str(b, "what"));
+        }
+        if (p.equals("/api/permission")) {
+            engine.platform.requestPermission(Json.str(b, "which"));
+            return Json.obj("ok", true);
+        }
+        if (p.equals("/api/open-logs")) {
+            return share("log");
+        }
+        if (p.equals("/api/update/check")) {
+            if (!selfUpdates()) {
+                return Json.obj("ok", true, "update", updateInfo());
+            }
+            startUpdateCheck(!Json.bool(b, "auto"));
+            return Json.obj("ok", true, "update", updateInfo());
+        }
+        if (p.equals("/api/update/install")) {
+            if (!selfUpdates()) {
+                throw new IllegalArgumentException("Updates come from Google Play.");
+            }
+            if (engine.running()) {
+                throw new IllegalArgumentException("Stop the bot first: installing the update closes the app for a moment.");
+            }
+            Map<String, Object> last = lastCheck;
+            if (last == null || !Json.bool(last, "available")) {
+                throw new IllegalArgumentException("No update to install. Tap Check for updates.");
+            }
+            engine.platform.installUpdate(Json.str(last, "url"), Json.str(last, "version"));
+            return Json.obj("ok", true, "update", updateInfo());
+        }
+        return null;
+    }
+
+    private String setAskMode(String value) {
+        String mode = Questions.askModeOf(value);
+        engine.config.set("NEW_QUESTIONS", mode);
+        Questions.askMode = mode;
+        return mode;
+    }
+
+    private void saveSettings(Map<String, Object> b) {
+        for (String key : SETTINGS_KEYS) {
+            if (!b.containsKey(key)) {
+                continue;
+            }
+            String raw = b.get(key) == null ? "" : String.valueOf(b.get(key)).replace("\r", "");
+            String value;
+            if (key.equals("KEYWORDS") || key.equals("SKIP_COMPANIES") || key.equals("SKIP_TITLE_WORDS")) {
+                value = Util.join(";", Util.splitList(raw));
+            } else {
+                value = raw.replace("\n", " ").trim();
+            }
+            engine.config.set(key, value);
+        }
+        if (b.containsKey("ABOUT_ME")) {
+            Util.writeText(engine.config.aboutFile, String.valueOf(b.get("ABOUT_ME") == null ? "" : b.get("ABOUT_ME")).replace("\r", ""));
+        }
+        // These two also change a running bot right away.
+        if (b.containsKey("NEW_QUESTIONS")) {
+            setAskMode(Json.str(b, "NEW_QUESTIONS"));
+        }
+        if (b.containsKey("ASK_TIMEOUT_MIN")) {
+            Map<String, String> one = new java.util.HashMap<String, String>();
+            one.put("ASK_TIMEOUT_MIN", Json.str(b, "ASK_TIMEOUT_MIN"));
+            Questions.askTimeoutMin = Config.cfgInt(one, "ASK_TIMEOUT_MIN", 0, 1440);
+        }
+    }
+
+    private Object saveCv(Map<String, Object> b) {
+        String name = Json.str(b, "name").isEmpty() ? "cv.pdf" : Json.str(b, "name");
+        String lower = name.toLowerCase(Locale.ROOT);
+        String ext = lower.endsWith(".txt") ? ".txt" : (lower.endsWith(".pdf") ? ".pdf" : "");
+        if (ext.isEmpty()) {
+            throw new IllegalArgumentException("Please choose a PDF (or a .txt) file.");
+        }
+        String data = Json.str(b, "data");
+        byte[] raw = Util.unbase64(data.contains(",") ? data.substring(data.lastIndexOf(',') + 1) : data);
+        if (raw.length < 100) {
+            throw new IllegalArgumentException("That file looks empty.");
+        }
+        String text = ext.equals(".txt") ? new String(raw, Util.UTF8) : Json.str(b, "text");
+        text = text.replaceAll("[ \\t]+\\n", "\n").replaceAll("\\n{3,}", "\n\n").trim();
+        if (text.length() < 150) {
+            throw new IllegalArgumentException("Could not read text from " + name + " (it may be a scanned image). Export your CV "
+                    + "as a text-based PDF, or upload it as a .txt file.");
+        }
+        for (String old : new String[]{"cv.pdf", "cv.txt"}) {
+            new File(engine.config.dir, old).delete();
+        }
+        File dest = new File(engine.config.dir, "cv" + ext);
+        Util.writeBytes(dest, raw);
+        Util.writeText(engine.config.cvTextFile, text);
+        engine.config.set("CV_FILE", dest.getName());
+        engine.config.set("CV_NAME", name.replaceAll("[\\\\/:*?\"<>|]", "_"));
+        return Json.obj("ok", true, "name", name, "chars", text.length(), "preview", Util.cut(text, 600));
+    }
+
+    /** Check the account and the AI through the server. */
+    private Object testAi(Map<String, Object> b) {
+        if (!engine.account.signedIn()) {
+            throw new IllegalArgumentException("Sign in to your account first.");
+        }
+        Ai ai = engine.newAi("", "", "check");
+        try {
+            engine.account.refresh();
+            ai.ping();
+        } catch (Account.AuthError e) {
+            throw new IllegalArgumentException(e.getMessage());
+        } catch (Account.ServerError e) {
+            throw new IllegalArgumentException(e.getMessage());
+        } catch (Ai.FatalAIError e) {
+            throw new IllegalArgumentException(e.getMessage());
+        } catch (RuntimeException e) {
+            throw new IllegalArgumentException("Could not reach the Auto Apply server: " + Util.shortError(e, 100));
+        }
+        return Json.obj("ok", true, "message", "Connected. The AI works" + (ai.servedBy.isEmpty() ? "" : " (" + ai.servedBy + ")") + ".",
+                "account", engine.account.info());
+    }
+
+    // ------------------------------------------------------------------ your Auto Apply account
+    private Object account(String what, Map<String, Object> b) {
+        Account acc = engine.account;
+        try {
+            if (what.equals("server")) {
+                acc.setServer(Json.str(b, "server"));
+                return Json.obj("ok", true, "account", acc.info());
+            }
+            if (what.equals("info")) {  // the contact address and whether new accounts are open
+                if (!Json.str(b, "server").isEmpty() && !Account.serverBuiltIn()) {
+                    acc.setServer(Json.str(b, "server"));
+                }
+                Map<String, Object> r = acc.serverInfo();
+                return Json.obj("ok", true, "account", acc.info(), "server", r);
+            }
+            if (what.equals("signup") || what.equals("login")) {
+                if (!Account.serverBuiltIn() && b.containsKey("server")) {
+                    acc.setServer(Json.str(b, "server"));
+                }
+                String email = Json.str(b, "email").trim();
+                String password = Json.str(b, "password");
+                if (email.isEmpty() || password.isEmpty()) {
+                    throw new IllegalArgumentException("Type your email and a password.");
+                }
+                Map<String, Object> info = what.equals("signup") ? acc.signUp(email, password, Json.str(b, "name").trim())
+                        : acc.signIn(email, password);
+                Util.log(what.equals("signup") ? "Created your account (" + email + ")." : "Signed in as " + email + ".");
+                return Json.obj("ok", true, "account", info);
+            }
+            if (what.equals("refresh")) {
+                acc.refresh();
+                return Json.obj("ok", true, "account", acc.info());
+            }
+            if (what.equals("logout")) {
+                if (engine.running()) {
+                    throw new IllegalArgumentException("Stop auto apply first.");
+                }
+                acc.signOut();
+                return Json.obj("ok", true, "account", acc.info());
+            }
+            if (what.equals("delete")) {
+                if (engine.running()) {
+                    throw new IllegalArgumentException("Stop auto apply first.");
+                }
+                acc.delete(Json.str(b, "password"));
+                Util.log("Your account was deleted from the server.");
+                return Json.obj("ok", true, "account", acc.info());
+            }
+        } catch (Account.AuthError e) {
+            throw new IllegalArgumentException(e.getMessage());
+        } catch (Account.ServerError e) {
+            throw new IllegalArgumentException(e.getMessage());
+        } catch (Account.NetError e) {
+            throw new IllegalArgumentException("Could not reach the server. Check the internet connection and try again.");
+        }
+        throw new IllegalArgumentException("Unknown account request: " + what);
+    }
+
+    /** You answered a waiting question: save it and let the jobs that waited for it run again. */
+    private Object answerWaiting(String key, Object answer) {
+        Map<String, Object> item = engine.waiting.get(key);
+        if (item == null) {
+            throw new IllegalArgumentException("This question is not waiting any more.");
+        }
+        Map<String, Object> check = Json.map(Json.copy(item));
+        check.put("rejected", new ArrayList<Object>());
+        Object[] c = Questions.coerceAnswer(check, answer);
+        if (!((String) c[1]).isEmpty()) {
+            throw new IllegalArgumentException((String) c[1]);
+        }
+        Object value = c[0];
+        engine.store.putAnswer(key, value, Json.str(item, "question"), "you");  // becomes part of your info
+        Map<String, Object> popped = engine.waiting.pop(key);
+        if (popped != null) {
+            item = popped;
+        }
+        List<String> ids = new ArrayList<String>();
+        for (Object j : Json.arr(item.get("jobs"))) {
+            ids.add(Json.str(Json.map(j), "id"));
+        }
+        int retried = engine.store.markAnswered(ids);
+        Questions.DESK.markPresent();
+        Map<String, Object> cur = Questions.DESK.get();
+        if (cur != null && key.equals(Json.str(cur, "key"))) {  // the bot is asking the same question right now
+            Questions.DESK.respond(Json.str(cur, "id"), "answer", value, true);
+        }
+        Util.log("Saved your answer: " + Util.cut(Json.str(item, "question"), 80) + " -> " + Bot.shown(value)
+                + (retried > 0 ? " (" + retried + " job(s) will be tried again)" : ""));
+        return Json.obj("ok", true, "value", value, "retried", retried);
+    }
+
+    private Object share(String what) {
+        File f;
+        String mime;
+        String title;
+        if ("csv".equals(what)) {
+            f = engine.store.writeCsv();
+            mime = "text/csv";
+            title = "Applied jobs";
+        } else if ("debug".equals(what)) {
+            f = engine.debugZip;
+            mime = "application/zip";
+            title = "Auto Apply debug.zip";
+        } else {
+            f = Util.logFile;
+            mime = "text/plain";
+            title = "Auto Apply log";
+        }
+        if (f == null || !f.isFile()) {
+            throw new IllegalArgumentException("Nothing to share yet.");
+        }
+        engine.platform.share(f, mime, title);
+        return Json.obj("ok", true);
+    }
+}

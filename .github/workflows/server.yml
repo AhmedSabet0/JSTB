@@ -1,0 +1,53 @@
+# Deploys the server when server/ changes on main: copies the files to the VM and rebuilds the containers.
+# The VM keeps its own .env and database; they are never overwritten.
+#
+# Repository settings > Secrets and variables > Actions:
+#   secret   SERVER_SSH_KEY   the private SSH key of the VM (the whole file)
+#   variable SERVER_HOST      the VM's IP, for example 145.241.153.177
+#   variable SERVER_USER      ubuntu
+name: Server
+
+on:
+  push:
+    branches: [main]
+    paths: ["server/**", ".github/workflows/server.yml"]
+  workflow_dispatch:
+
+concurrency: server-deploy
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install -r requirements.txt
+      - run: python tests/test_server.py
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: SSH key
+        env:
+          SERVER_SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SERVER_SSH_KEY" > ~/.ssh/id_vm
+          chmod 600 ~/.ssh/id_vm
+          ssh-keyscan -H "${{ vars.SERVER_HOST }}" >> ~/.ssh/known_hosts
+      - name: Copy and restart
+        run: |
+          TARGET="${{ vars.SERVER_USER }}@${{ vars.SERVER_HOST }}"
+          tar -C server --exclude=.env --exclude='*.db' --exclude=__pycache__ -czf server.tgz .
+          scp -i ~/.ssh/id_vm server.tgz "$TARGET:/tmp/server.tgz"
+          ssh -i ~/.ssh/id_vm "$TARGET" 'set -e
+            mkdir -p ~/autoapply-server && tar -xzf /tmp/server.tgz -C ~/autoapply-server && rm /tmp/server.tgz
+            cd ~/autoapply-server && sudo docker compose up -d --build --remove-orphans
+            sleep 5 && sudo docker compose ps'
