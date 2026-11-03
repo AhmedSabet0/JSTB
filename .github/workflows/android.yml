@@ -1,7 +1,10 @@
 # Builds the app.
 #   Every push to android/: a test build (Actions > the run > Artifacts).
-#   A tag like v3.1: a GitHub release with the APK (the GitHub build's updater installs it on users' phones) and the
-#   Google Play bundle; with the PLAY_SERVICE_ACCOUNT_JSON secret, the bundle also goes to Google Play by itself.
+#   A release, either way:
+#     - on github.com: Actions > Android > Run workflow > type the version (3.1.0)
+#     - from a PC:     git tag v3.1.0 && git push origin v3.1.0
+#   makes a GitHub release with the APK (the GitHub build's updater installs it on users' phones) and the Google Play
+#   bundle; with the PLAY_SERVICE_ACCOUNT_JSON secret, the bundle also goes to Google Play by itself.
 #
 # Repository settings > Secrets and variables > Actions:
 #   secret   KEYSTORE_BASE64             base64 of autoapply.jks (never commit the keystore)
@@ -17,6 +20,11 @@ on:
     paths: ["android/**", ".github/workflows/android.yml"]
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      release:
+        description: "Version to release, like 3.1.0 (leave empty for a test build)"
+        required: false
+        default: ""
 
 permissions:
   contents: write
@@ -42,6 +50,24 @@ jobs:
           ls "$ANDROID_HOME/platforms/android-34/android.jar" || yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-34"
           curl -fsSL -o "$RUNNER_TEMP/bundletool.jar" https://github.com/google/bundletool/releases/download/1.18.1/bundletool-all-1.18.1.jar
 
+      - name: Version
+        id: v
+        env:
+          REL: ${{ inputs.release }}
+        run: |
+          if [ -n "$REL" ]; then NAME="${REL#v}"
+          elif [[ "$GITHUB_REF" == refs/tags/v* ]]; then NAME="${GITHUB_REF_NAME#v}"
+          fi
+          if [ -n "${NAME:-}" ]; then
+            [[ "$NAME" =~ ^[0-9]+(\.[0-9]+){1,2}$ ]] || { echo "::error::A version looks like 3.1.0, not '$NAME'."; exit 1; }
+            echo "tag=v$NAME" >> "$GITHUB_OUTPUT"
+          else
+            NAME="$(grep -o 'versionName="[^"]*"' AndroidManifest.xml | cut -d'"' -f2)-dev.${{ github.run_number }}"
+            echo "tag=" >> "$GITHUB_OUTPUT"
+          fi
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+          echo "code=$(( 100 + ${{ github.run_number }} ))" >> "$GITHUB_OUTPUT"
+
       - name: Signing key
         id: key
         env:
@@ -51,20 +77,13 @@ jobs:
           if [ -n "$KEYSTORE_BASE64" ]; then
             echo "$KEYSTORE_BASE64" | base64 -d > keystore/autoapply.jks
             echo "real=yes" >> "$GITHUB_OUTPUT"
-          elif [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+          elif [ -n "${{ steps.v.outputs.tag }}" ]; then
             echo "::error::A release needs the KEYSTORE_BASE64 and KS_PASS secrets (see README)."
             exit 1
           else
             echo "::warning::No KEYSTORE_BASE64 secret: this test build is signed with a throwaway key, so it cannot update an installed app."
             echo "real=no" >> "$GITHUB_OUTPUT"
           fi
-
-      - name: Version
-        id: v
-        run: |
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then NAME="${GITHUB_REF_NAME#v}"; else NAME="$(grep -o 'versionName="[^"]*"' AndroidManifest.xml | cut -d'"' -f2)-dev.${{ github.run_number }}"; fi
-          echo "name=$NAME" >> "$GITHUB_OUTPUT"
-          echo "code=$(( 100 + ${{ github.run_number }} ))" >> "$GITHUB_OUTPUT"
 
       - name: Build APK (GitHub) and AAB (Google Play)
         env:
@@ -89,22 +108,28 @@ jobs:
           path: dist/*
 
       - name: Release
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: steps.v.outputs.tag != ''
         working-directory: .
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.v.outputs.tag }}
+          NAME: ${{ steps.v.outputs.name }}
         run: |
-          gh release create "$GITHUB_REF_NAME" dist/* --title "Auto Apply ${GITHUB_REF_NAME#v}" --generate-notes
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/* --clobber        # a release made on github.com: add the files
+          else
+            gh release create "$TAG" dist/* --target "$GITHUB_SHA" --title "Auto Apply $NAME" --generate-notes
+          fi
 
       - name: Google Play upload set up?
         id: play
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: steps.v.outputs.tag != ''
         env:
           PLAY_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
         run: echo "ready=$([ -n "$PLAY_JSON" ] && echo yes || echo no)" >> "$GITHUB_OUTPUT"
 
       - name: Upload to Google Play
-        if: startsWith(github.ref, 'refs/tags/v') && steps.play.outputs.ready == 'yes'
+        if: steps.v.outputs.tag != '' && steps.play.outputs.ready == 'yes'
         uses: r0adkll/upload-google-play@v1
         with:
           serviceAccountJsonPlainText: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}

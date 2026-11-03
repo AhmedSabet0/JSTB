@@ -38,7 +38,7 @@ with it.
 | What | Command | What happens |
 |---|---|---|
 | Server | `git push` (a change in `server/`) | Actions runs the server tests, copies the files to the VM and restarts it. `.env` and the database stay. |
-| App, new version | `git tag v3.1.0 && git push origin v3.1.0` | Actions builds both apps and makes a GitHub release with the APK and the Play bundle. |
+| App, new version | github.com: **Actions > Android > Run workflow**, type the version (`3.1.0`). Or from a PC: `git tag v3.1.0 && git push origin v3.1.0` | Actions builds both apps and makes a GitHub release with the APK and the Play bundle. |
 | Phones with the GitHub build | nothing more | The app checks the latest release when it opens (at most every 6 hours) and offers *Download and install*; Settings > App updates checks now. |
 | Phones with the Google Play build | upload the bundle (or let Actions do it with `PLAY_SERVICE_ACCOUNT_JSON`) | Google Play updates the app. |
 | Everybody must update now | Admin page > Settings > App > Oldest version allowed | Older apps show only an Update screen until they update. Do this after the new version is out. |
