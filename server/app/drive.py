@@ -598,6 +598,59 @@ def _new_job(row, data, now):
     return ("copilot", link["id"], item, now)
 
 
+def _day_ts(text):
+    try:
+        d = datetime.strptime(str(text or "").strip()[:10], "%Y-%m-%d")
+    except ValueError:
+        return 0.0
+    return d.replace(hour=12, tzinfo=db.TIMEZONE).timestamp()
+
+
+SOURCE_OF = {v: k for k, v in SOURCES.items()}
+
+
+def import_rows(layout, cur, data, now):
+    """Everything in a sheet as records: an account that has nothing yet (a new server, an account made again) takes
+    its data back from its Drive. Returns (changes, rows kept as they are)."""
+    changes, keep = [], []
+    fields = {f for f, _l, _p in PROFILE}
+    for row in cur["rows"]:
+        rid, ch = row["ID"], None
+        if layout is ANSWERS:
+            if rid[2:] in fields and rid.startswith("p:") and row["Answer"]:
+                ch = ("profile", rid[2:], {"v": clean_profile(rid[2:], row["Answer"])}, now)
+            elif rid.startswith("s:") and row["Answer"]:
+                ch = _answer_edit(rid, {"Answer": row["Answer"]}, data, now)
+            elif rid.startswith("f:") and row["Question"] and row["Answer"]:
+                ch = ("facts", rid[2:], {"id": rid[2:], "category": category_of(row["Section"]), "label": row["Question"],
+                                         "value": row["Answer"], "asked": [], "source": SOURCE_OF.get(row["By"], "you"),
+                                         "updated": now}, now)
+            elif not rid:
+                ch = _new_answer(row, data, now)
+        else:
+            at = _day_ts(row["Applied on"]) or now
+            if rid.startswith("c:") and URL_RE.match(row["Link"]):
+                item = {"id": rid[2:], "url": row["Link"], "title": row["Job title"] or host_of(row["Link"]),
+                        "company": row["Company"], "channel": "linkedin" if row["Via"] == "LinkedIn" else "company",
+                        "source": "drive", "added": at, "state": "new", "stage": "", "fit": None, "why": "", "note": row["Note"]}
+                _set_status(item, row["Status"] or "To apply", at)
+                ch = ("copilot", rid[2:], item, now)
+            elif rid.startswith("a:"):
+                st = row["Status"].strip().lower()
+                ch = ("jobs", rid[2:], {"id": rid[2:], "status": "applied", "title": row["Job title"], "company": row["Company"],
+                                        "url": row["Link"], "stage": st if st in APPLIED else "applied", "ts": at,
+                                        "score": None, "reason": "", "note": row["Note"]}, now)
+            elif not rid:
+                ch = _new_job(row, data, now)
+        if ch:
+            changes.append(ch)
+            if ch[0] == "copilot":
+                data["copilot"][ch[1]] = ch[2]
+        elif not rid:
+            keep.append(dict(row, ID=""))
+    return changes, keep
+
+
 def build(layout, data, extras, loose, cur_rows=None):
     """The sheet's rows (lists) from the records: heading, one row per item, then the kept rows; columns the user
     added keep their values (by the row's ID)."""
@@ -744,6 +797,7 @@ async def _ensure_folder(s, link, st):
              if f.get("mimeType") == FOLDER_MIME]
     if found:
         fid = found[0]["id"]          # connected before: the same folder and its files again
+        st["import_all"] = records.count(db.conn(), link["user_id"]) == 0   # an empty account takes them back
         for f in await s.find(f"'{fid}' in parents and trashed = false"):
             key = (f.get("appProperties") or {}).get("autoapply")
             if key in ("cv", "answers", "jobs") and key not in st["files"]:
@@ -813,6 +867,8 @@ async def _sync_sheet(s, uid, st, layout, folder, children):
             changes, loose, misplaced = merge(layout, info, cur, _load(uid), now)
             if misplaced:
                 log.info("user %s: %s rows of %s seem out of place", uid, misplaced, layout["title"])
+        elif st.get("import_all"):      # an account with nothing yet takes everything back from its Drive
+            changes, loose = import_rows(layout, cur, _load(uid), now)
         else:                           # a sheet found again after connecting again: the server's data wins, new rows count
             changes, loose, _m = merge(layout, {}, {"rows": [r for r in cur["rows"] if not r["ID"]]}, _load(uid), now)
         pulled = _save_changes(uid, changes)
@@ -874,6 +930,12 @@ async def _sync_cv(s, uid, st, folder, children):
             have = records.cv_file(db.conn(), uid)
     elif meta is not None and md5 and not info.get("md5"):
         info["md5"] = md5               # a CV file found again after connecting again
+        if st.get("import_all") and have is None:   # nothing here yet: the CV in Drive is the CV
+            problem, sha, took = await _take_cv(s, uid, meta, None)
+            if not problem:
+                info["sha"] = sha
+                saved = 1 if took else 0
+                have = records.cv_file(db.conn(), uid)
     if have is not None and have["sha256"] != info.get("sha"):
         meta = await s.upload(meta["id"] if meta else None,
                               {"name": have["file_name"]} if meta else {"name": have["file_name"], "parents": [folder],
@@ -907,6 +969,11 @@ async def sync_user(uid, force=False):
                 own += await _sync_sheet(s, uid, st, layout, folder, children)
             problem, n = await _sync_cv(s, uid, st, folder, children)
             own += n
+            if st.pop("import_all", False) and own:   # taken back from Drive: the setup is done on every phone
+                with db.tx() as t:
+                    own += len(records.write(t, uid, [("settings", "SETUP_DONE", {"v": "1"}, time.time()),
+                                                      ("profile", "done", {"v": "1"}, time.time())], "drive"))
+                log.info("user %s: data taken back from Google Drive", uid)
             done = db.one("SELECT data_rev FROM users WHERE id = ?", (uid,))["data_rev"]
             with db.tx() as t:          # changes from a phone during this sync are written by the next one
                 t.execute("UPDATE drive_links SET state = ?, synced_at = ?, checked_at = ?, error = ?, error_code = ?, "
@@ -940,26 +1007,47 @@ def start_url(uid):
         "code_challenge": challenge, "code_challenge_method": "S256"})
 
 
-async def finish(code, state):
-    """Google sent the user back with a code: keep the tokens, then make the folder (in the background).
-    Returns the Google account's email."""
-    row = db.one("SELECT user_id, verifier, expires_at FROM oauth_states WHERE state_hash = ?", (security.token_hash(state),))
-    with db.tx() as t:
-        t.execute("DELETE FROM oauth_states WHERE state_hash = ?", (security.token_hash(state),))
-    if row is None or row["expires_at"] < time.time():
-        raise DriveError("expired", "This link is too old. Go back to the app and tap Connect Google Drive again.")
-    uid = row["user_id"]
+async def exchange(code, verifier):
+    """Google's tokens for the code it sent back (our PKCE verifier proves we started that sign-in)."""
     s = db.settings()
     if not configured(s):
-        raise DriveError("off", "Google Drive is not set up on the server yet.")
+        raise DriveError("off", "Google sign-in is not set up on the server yet.")
     r = await _form(TOKEN_URL, {"grant_type": "authorization_code", "code": code, "client_id": s["google_client_id"],
                                 "client_secret": s["google_client_secret"], "redirect_uri": redirect_uri(),
-                                "code_verifier": row["verifier"]})
+                                "code_verifier": verifier})
     if r.status_code != 200:
         e = _error_of(r)
         raise DriveError(e.code, "Google did not accept the sign-in. Try again from the app." if e.code != "setup" else
                          MESSAGES["setup"])
-    data = r.json()
+    return r.json()
+
+
+def _b64url_json(part):
+    try:
+        out = json.loads(base64.urlsafe_b64decode(part + "=" * (-len(part) % 4)))
+    except ValueError:
+        return None
+    return out if isinstance(out, dict) else None
+
+
+def id_claims(id_token):
+    """Who signed in, from the ID token Google's token endpoint just gave us over TLS (so its signature needs no check,
+    OpenID Connect Core 3.1.3.7); its issuer, audience, expiry and the verified email are checked."""
+    parts = str(id_token or "").split(".")
+    claims = _b64url_json(parts[1]) if len(parts) == 3 else None
+    if claims is None:
+        raise DriveError("google", "Google did not say who signed in. Try again.")
+    if claims.get("iss") not in ("https://accounts.google.com", "accounts.google.com") or \
+            claims.get("aud") != db.settings().get("google_client_id") or float(claims.get("exp") or 0) < time.time() - 60:
+        raise DriveError("google", "That Google sign-in is not for Auto Apply, or it ran out. Try again.")
+    if not claims.get("sub") or not claims.get("email") or claims.get("email_verified") not in (True, "true"):
+        raise DriveError("unverified", "That Google account has no verified email address.")
+    return claims
+
+
+async def link_tokens(uid, data, email=""):
+    """Keep the Drive tokens of a sign-in (Connect Google Drive, or Sign in with Google), then sync in the background.
+    Returns the Google account's email."""
     if SCOPE not in str(data.get("scope") or "").split():
         raise DriveError("scope", "Auto Apply needs to see and make the files it uses in your Drive. Try again and tick "
                                   "that box.")
@@ -977,14 +1065,53 @@ async def finish(code, state):
                   "ON CONFLICT(user_id) DO UPDATE SET refresh_token = excluded.refresh_token, access_token = "
                   "excluded.access_token, access_until = excluded.access_until, linked_at = excluded.linked_at, "
                   "error = '', error_code = ''", (uid, vault.seal(refresh), vault.seal(access), until, time.time()))
-    user = (await sess.about()).get("user") or {}
-    email = str(user.get("emailAddress") or "")
+    if not email:
+        email = str(((await sess.about()).get("user") or {}).get("emailAddress") or "")
+    other = old is not None and old["email"] and old["email"].lower() != email.lower()
     with db.tx() as t:
-        if old is not None and old["email"] and old["email"].lower() != email.lower():
-            t.execute("UPDATE drive_links SET folder_id = '', state = '{}' WHERE user_id = ?", (uid,))   # another Google account
+        if other:                       # another Google account: its own folder; the old one stays in the old Drive
+            t.execute("UPDATE drive_links SET folder_id = '', state = '{}' WHERE user_id = ?", (uid,))
         t.execute("UPDATE drive_links SET email = ?, pushed_rev = -1, checked_at = NULL WHERE user_id = ?", (email, uid))
+    if other and vault.unseal(old["refresh_token"]) != refresh:
+        try:
+            await client().post(REVOKE_URL, data={"token": vault.unseal(old["refresh_token"])})   # the old access ends
+        except httpx.HTTPError:
+            pass
     later(sync_user(uid, force=True))
     return email
+
+
+async def finish(code, state):
+    """Connect Google Drive: Google sent the user back with a code. Returns the Google account's email."""
+    row = db.one("SELECT user_id, verifier, expires_at FROM oauth_states WHERE state_hash = ?", (security.token_hash(state),))
+    with db.tx() as t:
+        t.execute("DELETE FROM oauth_states WHERE state_hash = ?", (security.token_hash(state),))
+    if row is None or row["expires_at"] < time.time():
+        raise DriveError("expired", "This link is too old. Go back to the app and tap Connect Google Drive again.")
+    return await link_tokens(row["user_id"], await exchange(code, row["verifier"]))
+
+
+def login_url(purpose, app_challenge="", device=""):
+    """Google's page for Sign in with Google (purpose login: your account and your Drive in one go) or for deleting
+    an account on the web (purpose delete: only who you are)."""
+    s = db.settings()
+    if not configured(s):
+        raise DriveError("off", "Google sign-in is not set up on the server yet.")
+    state = secrets.token_urlsafe(32)
+    verifier = secrets.token_urlsafe(48)
+    challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).decode().rstrip("=")
+    now = time.time()
+    with db.tx() as t:
+        t.execute("DELETE FROM login_states WHERE expires_at < ?", (now,))
+        t.execute("INSERT INTO login_states(state_hash, purpose, verifier, app_challenge, device, expires_at) "
+                  "VALUES (?, ?, ?, ?, ?, ?)", (security.token_hash(state), purpose, verifier, app_challenge, device[:80], now + 900))
+    scope = "openid email profile" + (" " + SCOPE if purpose == "login" else "")
+    params = {"client_id": s["google_client_id"], "redirect_uri": redirect_uri(), "response_type": "code", "scope": scope,
+              "state": state, "code_challenge": challenge, "code_challenge_method": "S256",
+              "prompt": "select_account consent" if purpose == "login" else "select_account"}
+    if purpose == "login":
+        params.update({"access_type": "offline", "include_granted_scopes": "true"})
+    return AUTH_URL + "?" + urlencode(params)
 
 
 async def unlink(uid):

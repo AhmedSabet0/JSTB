@@ -186,7 +186,7 @@ def main_test():
         q = fake.consent(url)
         r = c.get("/oauth/google/callback", params=q)
         check("the Drive box not ticked: explained", r.status_code == 400 and "tick" in r.text, r.text[-300:])
-        fake.grant_scope = drive.SCOPE
+        fake.grant_scope = None
         q = fake.consent(c.post("/v1/me/drive/link", headers=P1, json={}).json()["url"])
         r = c.get("/oauth/google/callback", params=dict(q, state="forged-state"))
         check("a forged state is refused", r.status_code == 400 and "too old" in r.text)
@@ -431,6 +431,121 @@ def main_test():
         ov = c.get("/admin/api/overview").json()
         check("overview counts Drive users", ov["totals"]["drive"] == 1 and ov["users"][0]["drive"] == 1, ov["totals"])
         check("privacy policy explains Drive and Limited Use", all(x in c.get("/privacy").text for x in ("drive.file", "Limited Use", "My answers")))
+        print("\n== Sign in with Google")
+        import hashlib
+        import re as re2
+
+        def challenge(v):
+            return base64.urlsafe_b64encode(hashlib.sha256(v.encode()).digest()).decode().rstrip("=")
+
+        def google_login(email, verifier, name="Nada"):
+            fake.email, fake.name = email, name
+            start = c.post("/v1/auth/google/start", json={"challenge": challenge(verifier), "device": "Pixel 9"}).json()["url"]
+            page = c.get("/oauth/google/callback", params=fake.consent(start))
+            m = re2.search(r"autoapply://auth\?code=([A-Za-z0-9_\-]+)", page.text)
+            return start, page, (m.group(1) if m else None)
+
+        def mine(key, email):
+            return [f for f in fake.find_app(key) if f.get("owner") == email]
+
+        main.auth_limit.hits.clear()     # this test signs in far more often than a person would
+        main.google_limit.hits.clear()
+        cfg = c.get("/v1/config").json()
+        check("the app learns: Google sign-in is on, new password accounts are off", cfg["google_signin"] and not cfg["password_signups"], cfg)
+        r = c.post("/v1/auth/signup", json={"email": "new@example.com", "password": "secret-pass"})
+        check("a new account with a password: refused, use Google", r.status_code == 403 and err(r) == "use_google", r.text)
+        check("starting needs the app's PKCE challenge", err(c.post("/v1/auth/google/start", json={"challenge": "short"})) == "bad_request")
+        V = "app-verifier-" + "a" * 48
+        url, page, code = google_login("nada@gmail.com", V)
+        check("Google's page asks who you are and for your Drive, in one consent", all(x in url for x in (
+            "openid", "email", "drive.file", "select_account", "access_type=offline")), url)
+        check("back from Google: signed in, with a one-time code for the app", page.status_code == 200 and code
+              and "nada@gmail.com" in page.text, page.text[-300:])
+        r = c.post("/v1/auth/google/finish", json={"code": code, "verifier": "another-verifier-" + "b" * 40})
+        check("the code without the app's own verifier is worth nothing", r.status_code == 400 and err(r) == "bad_code")
+        check("and it is used up", err(c.post("/v1/auth/google/finish", json={"code": code, "verifier": V})) == "bad_code")
+        r = c.post("/v1/auth/google/claim", json={"verifier": V})
+        check("back in the app before Google's page is done: still pending", r.status_code == 200 and r.json().get("pending"), r.text)
+        url, page, code = google_login("nada@gmail.com", V)
+        r = c.post("/v1/auth/google/claim", json={"verifier": "another-verifier-" + "c" * 40})
+        check("another app's verifier finds nothing", r.status_code == 200 and r.json().get("pending"), r.text)
+        r = c.post("/v1/auth/google/claim", json={"verifier": V, "device": "Pixel 9"})
+        check("the browser did not open the app: back in it, its verifier alone finishes the sign-in",
+              r.status_code == 200 and r.json().get("token") and not r.json().get("pending"), r.text)
+        check("then the link's code is used up", err(c.post("/v1/auth/google/finish", json={"code": code, "verifier": V})) == "bad_code")
+        url, page, code = google_login("nada@gmail.com", V)
+        r = c.post("/v1/auth/google/finish", json={"code": code, "verifier": V, "device": "Pixel 9"})
+        check("and the link used first: the claim finds nothing more", c.post("/v1/auth/google/claim", json={"verifier": V}).json().get("pending"))
+        PN = auth(r.json()["token"])
+        me = c.get("/v1/me", headers=PN).json()["user"]
+        check("signed in: an account made with Google (at the first try), without a password", r.status_code == 200
+              and not r.json()["created"] and me["email"] == "nada@gmail.com" and me["google"] and not me["has_password"], r.text)
+        d = c.get("/v1/me/drive", headers=PN).json()["drive"]
+        check("its Google Drive is connected by the same consent", d["connected"] and d["email"] == "nada@gmail.com", d)
+        check("signing in with a password says to use Google", err(c.post("/v1/auth/login", json={
+            "email": "nada@gmail.com", "password": "whatever-1"})) == "use_google")
+        t0 = time.time()
+        c.post("/v1/me/data", headers=PN, json={"now": t0, "changes": [
+            {"k": "profile", "id": "phone", "d": {"v": "01099998888"}, "base": 0, "t": t0},
+            {"k": "settings", "id": "KEYWORDS", "d": {"v": "Cloud Engineer"}, "base": 0, "t": t0},
+            {"k": "facts", "id": "fn1", "d": {"id": "fn1", "category": "Skills", "label": "Years with Terraform", "value": "3",
+                                              "source": "you"}, "base": 0, "t": t0},
+            {"k": "copilot", "id": "li:4055555555", "d": {"id": "li:4055555555", "url": "https://www.linkedin.com/jobs/view/4055555555/",
+                                                          "title": "Cloud Engineer", "company": "Valeo", "channel": "linkedin",
+                                                          "state": "applied", "stage": "offer", "applied_at": t0 - 86400,
+                                                          "added": t0 - 90000, "note": "Offer 45k"}, "base": 0, "t": t0},
+            {"k": "jobs", "id": "4066666666", "d": {"id": "4066666666", "status": "applied", "title": "DevOps Engineer",
+                                                    "company": "Etisalat", "url": "https://www.linkedin.com/jobs/view/4066666666/",
+                                                    "ts": t0 - 3600, "stage": "interview"}, "base": 0, "t": t0}]})
+        c.post("/v1/me/cv", headers=PN, json={"name": "Nada CV.pdf", "data": base64.b64encode(pdf).decode(), "text": CV_TEXT,
+                                              "now": t0, "t": t0, "base": 0})
+        c.post("/v1/me/drive/sync", headers=PN, json={})
+        check("her Auto Apply folder fills", mine("answers", "nada@gmail.com") and any(
+            "Years with Terraform" in "".join(r) for r in fake.user_values(mine("answers", "nada@gmail.com")[0]["id"])))
+        r = c.post("/v1/me/delete", headers=PN, json={"confirm": "wrong@example.com"})
+        check("deleting an account made with Google: type its email to confirm", r.status_code == 400 and err(r) == "bad_confirm")
+        check("deleted", c.post("/v1/me/delete", headers=PN, json={"confirm": "nada@gmail.com"}).status_code == 200)
+        url, page, code = google_login("nada@gmail.com", V)
+        r = c.post("/v1/auth/google/finish", json={"code": code, "verifier": V})
+        PN = auth(r.json()["token"])
+        recs = {(x["k"], x["id"]): x["d"] for x in c.get("/v1/me/data", headers=PN).json()["records"]}
+        check("signed in again: a new account (as on a new server)", r.json()["created"])
+        check("which takes everything back from her Drive, with the setup done", recs.get(("profile", "phone")) == {"v": "01099998888"}
+              and recs.get(("settings", "KEYWORDS")) == {"v": "Cloud Engineer"} and recs.get(("facts", "fn1"), {}).get("value") == "3"
+              and recs.get(("copilot", "li:4055555555"), {}).get("stage") == "offer"
+              and recs.get(("jobs", "4066666666"), {}).get("stage") == "interview"
+              and recs.get(("settings", "SETUP_DONE")) == {"v": "1"}, sorted(recs))
+        r = c.get("/v1/me/cv", headers=PN)
+        check("and her CV", r.status_code == 200 and base64.b64decode(r.json()["data"]) == pdf and "Network Engineer" in r.json()["text"],
+              r.text[:200])
+        check("one Auto Apply folder in her Drive, not two", len(mine("folder", "nada@gmail.com")) == 1)
+        url, page, code = google_login("sara@example.com", V, "Sara")
+        r = c.post("/v1/auth/google/finish", json={"code": code, "verifier": V})
+        me = c.get("/v1/me", headers=auth(r.json()["token"])).json()["user"]
+        check("an account made with a password, signing in with Google for the same email: the same account", me["id"] == uid
+              and me["google"] and me["has_password"] and not r.json()["created"], me)
+        check("its Drive is now that Google account's", c.get("/v1/me/drive", headers=P1).json()["drive"]["email"] == "sara@example.com")
+        c.post("/admin/api/settings", headers=A, json={"signups_open": False})
+        url, page, code = google_login("someone@gmail.com", V)
+        check("new accounts closed: a new Google account is told", page.status_code == 400 and "closed" in page.text and not code)
+        url, page, code = google_login("sara@example.com", V, "Sara")
+        check("an account that exists still signs in", code is not None)
+        c.post("/admin/api/settings", headers=A, json={"signups_open": True})
+        url, page, code = google_login("web@gmail.com", V, "Web")
+        c.post("/v1/auth/google/finish", json={"code": code, "verifier": V})
+        check("the web page for deleting links to Google", "/delete-account/google" in c.get("/delete-account").text)
+        r = c.get("/delete-account/google", follow_redirects=False)
+        fake.email = "web@gmail.com"
+        page = c.get("/oauth/google/callback", params=fake.consent(r.headers["location"]))
+        m = re2.search(r'name="token" value="([^"]+)"', page.text)
+        check("deleting on the web with Google: Google says who you are, then you confirm", r.status_code == 302
+              and "drive.file" not in r.headers["location"] and m and "web@gmail.com" in page.text, page.text[-400:])
+        r = c.post("/delete-account/google", data={"token": m.group(1) if m else ""})
+        check("deleted on the web", "were deleted" in r.text and db.one("SELECT 1 FROM users WHERE email = 'web@gmail.com'") is None)
+        users = {u["email"]: u for u in c.get("/admin/api/overview").json()["users"]}
+        check("the admin sees how each user signs in", users["nada@gmail.com"]["google"] and not users["nada@gmail.com"]["has_password"]
+              and users["sara@example.com"]["google"] and users["sara@example.com"]["has_password"])
+
         n_rt = len(fake.refresh)
         r = c.post("/v1/me/delete", headers=P1, json={"password": "secret-pass"})
         left = [db.one(f"SELECT COUNT(*) AS n FROM {t} WHERE user_id = ?", (uid,))["n"] for t in ("records", "user_files", "drive_links")]

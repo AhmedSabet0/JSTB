@@ -380,6 +380,7 @@
         + `${u.version_code ? ` (code ${u.version_code})` : ''}` : '—'}${u.device ? ` on ${esc(u.device)}` : ''}`],
       ['Applied with help today', fmtNum(u.helped_today)],
       ['Signed in on', `${u.devices} phone(s)`], ['Account created', when(u.created_at)],
+      ['Signs in with', u.google && u.has_password ? 'Google, or email and password' : u.google ? 'Google' : 'Email and password'],
       ['Pro since', u.pro && u.pro_changed_at ? when(u.pro_changed_at) : '—'],
     ];
     $('d-facts').innerHTML = facts.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('');
@@ -489,6 +490,7 @@
       : '<li class="muted">No app has reported yet.</li>';
     $('s-signups').checked = !!s.signups_open;
     $('s-autopro').checked = !!s.new_users_pro;
+    $('s-pwsignups').checked = !!s.password_signups;
     $('g-redirect').textContent = s.google_redirect || `${location.origin}/oauth/google/callback`;
     if (document.activeElement !== $('g-id')) $('g-id').value = s.google_client_id || '';
     $('g-secret').value = '';
@@ -557,7 +559,8 @@
   });
   $('f-accounts').addEventListener('submit', (ev) => {
     ev.preventDefault();
-    saveSettings({ signups_open: $('s-signups').checked, new_users_pro: $('s-autopro').checked });
+    saveSettings({ signups_open: $('s-signups').checked, new_users_pro: $('s-autopro').checked,
+      password_signups: $('s-pwsignups').checked });
   });
   document.querySelectorAll('[data-copy]').forEach((b) => b.addEventListener('click', async () => {
     const text = $(b.dataset.copy).textContent;

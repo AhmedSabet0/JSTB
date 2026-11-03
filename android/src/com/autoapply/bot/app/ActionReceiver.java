@@ -11,10 +11,13 @@ import com.autoapply.bot.core.Json;
 
 import java.util.Map;
 
-/** Buttons in the notifications: Stop, an option, a suggestion, or an inline reply to a question. */
+/** Buttons in the notifications: Stop, an option, a suggestion, or an inline reply to a question; Apply, Skip and Apply
+ *  all for applications filled up to Submit. */
 public final class ActionReceiver extends BroadcastReceiver {
     static final String STOP = "com.autoapply.bot.STOP";
     static final String ANSWER = "com.autoapply.bot.ANSWER";
+    static final String APPROVE = "com.autoapply.bot.APPROVE";
+    static final String SKIP = "com.autoapply.bot.SKIP";
 
     @Override
     public void onReceive(Context context, Intent intent) {
@@ -22,6 +25,34 @@ public final class ActionReceiver extends BroadcastReceiver {
         String action = intent.getAction();
         if (STOP.equals(action)) {
             p.engine.stop();
+            return;
+        }
+        if (APPROVE.equals(action) || SKIP.equals(action)) {   // your yes (or no): sending starts on the bot's thread
+            final boolean yes = APPROVE.equals(action);
+            final String id = intent.getStringExtra("id");
+            final boolean all = "1".equals(intent.getStringExtra("all"));
+            final PendingResult pending = goAsync();
+            final Context app = context.getApplicationContext();
+            new Thread(new Runnable() {
+                @Override
+                public void run() {
+                    try {
+                        java.util.List<String> ids = all || id == null ? null : java.util.Collections.singletonList(id);
+                        final int n = yes ? p.engine.approve(ids) : p.engine.skipReady(ids);
+                        if (yes && n > 0) {
+                            p.main.post(new Runnable() {
+                                @Override
+                                public void run() {
+                                    Toast.makeText(app, n == 1 ? "Sending it now." : "Sending " + n + " applications.",
+                                            Toast.LENGTH_SHORT).show();
+                                }
+                            });
+                        }
+                    } finally {
+                        pending.finish();
+                    }
+                }
+            }).start();
             return;
         }
         if (!ANSWER.equals(action)) {

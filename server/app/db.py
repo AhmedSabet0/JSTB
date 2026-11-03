@@ -114,6 +114,26 @@ CREATE TABLE IF NOT EXISTS oauth_states (
   verifier TEXT NOT NULL,
   expires_at REAL NOT NULL
 );
+-- Sign in with Google: a sign-in on its way through Google's page (purpose login or delete), before anyone is known.
+CREATE TABLE IF NOT EXISTS login_states (
+  state_hash TEXT PRIMARY KEY,
+  purpose TEXT NOT NULL,
+  verifier TEXT NOT NULL,
+  app_challenge TEXT NOT NULL DEFAULT '',
+  device TEXT NOT NULL DEFAULT '',
+  expires_at REAL NOT NULL
+);
+-- After Google's page: a one-time code the app trades for a session (only with its own PKCE verifier), or the token
+-- that confirms deleting an account on the web.
+CREATE TABLE IF NOT EXISTS login_codes (
+  code_hash TEXT PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  purpose TEXT NOT NULL,
+  app_challenge TEXT NOT NULL DEFAULT '',
+  device TEXT NOT NULL DEFAULT '',
+  created INTEGER NOT NULL DEFAULT 0,
+  expires_at REAL NOT NULL
+);
 """
 
 # Settings the admin page changes. Values are stored as text.
@@ -130,8 +150,9 @@ DEFAULTS = {
     "min_version_github": "0",   # versionCode below this must update first
     "min_version_play": "0",
     "play_url": "https://play.google.com/store/apps/details?id=com.autoapply.bot",
-    "google_client_id": "",      # Google Drive sync: the OAuth client made in Google Cloud (see README)
+    "google_client_id": "",      # Sign in with Google and Drive sync: the OAuth client made in Google Cloud (README)
     "google_client_secret": "",
+    "password_signups": "0",     # new accounts with an email and a password (once Google sign-in is set up)
 }
 
 # Columns added after 2.0, added to existing databases on start.
@@ -146,6 +167,7 @@ MIGRATIONS = [
     ("applications", "url", "TEXT NOT NULL DEFAULT ''"),
     ("users", "data_rev", "INTEGER NOT NULL DEFAULT 0"),
     ("users", "data_at", "REAL"),
+    ("users", "google_sub", "TEXT NOT NULL DEFAULT ''"),
 ]
 
 _local = threading.local()
@@ -190,6 +212,7 @@ def init():
         have = {r["name"] for r in c.execute(f"PRAGMA table_info({table})").fetchall()}
         if column not in have:
             c.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+    c.execute("CREATE INDEX IF NOT EXISTS users_google ON users(google_sub)")
     with tx() as t:
         for k, v in DEFAULTS.items():
             t.execute("INSERT OR IGNORE INTO settings(key, value) VALUES (?, ?)", (k, v))
@@ -202,6 +225,14 @@ def init():
                     t.execute("UPDATE settings SET value = ? WHERE key = ?", (val, key))
         t.execute("DELETE FROM admin_sessions WHERE expires_at < ?", (time.time(),))
         t.execute("DELETE FROM oauth_states WHERE expires_at < ?", (time.time(),))
+        t.execute("DELETE FROM login_states WHERE expires_at < ?", (time.time(),))
+        t.execute("DELETE FROM login_codes WHERE expires_at < ?", (time.time(),))
+        for env, key in (("GOOGLE_CLIENT_ID", "google_client_id"), ("GOOGLE_CLIENT_SECRET", "google_client_secret")):
+            val = os.environ.get(env, "").strip()      # the Google client from .env, when the admin page has none
+            if val:
+                row = t.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+                if not row or row["value"] == DEFAULTS[key]:
+                    t.execute("UPDATE settings SET value = ? WHERE key = ?", (val, key))
 
 
 def one(sql, args=()):

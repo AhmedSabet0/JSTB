@@ -22,11 +22,12 @@ public final class Config {
         {"MIN_SCORE", "6"},
         {"SKIP_COMPANIES", ""},
         {"SKIP_TITLE_WORDS", ""},
-        {"NEW_QUESTIONS", "ask"},
+        {"NEW_QUESTIONS", "unsure"},   // the AI answers what it is sure about, you the rest
         {"ASK_TIMEOUT_MIN", "10"},
         {"UPDATE_SOURCE", "AhmedSabet0/JSTB"},
         {"DAILY_GOAL", "10"},
         {"AUTO_UPDATE", "1"},
+        {"APPROVE_FIRST", "1"},
         {"SETUP_DONE", ""},
     };
 

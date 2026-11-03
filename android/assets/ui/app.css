@@ -331,6 +331,22 @@ details summary { cursor: pointer; color: var(--action); font-size: 14px; margin
 .announce p { flex: 1; font-size: 14.5px; overflow-wrap: anywhere; }
 .announce .icon-btn { width: 36px; height: 36px; margin: -6px 0 -6px; color: var(--ink-2); }
 
+/* ready to send */
+.ready-panel .hint { margin: -4px 0 8px; }
+.ready-list li { display: grid; grid-template-columns: 1fr auto; gap: 2px 12px; align-items: center; }
+.ready-list li > a.job, .ready-list li > .co { grid-column: 1; }
+.ready-list .ready-btns, .ready-list .ready-tag { grid-column: 2; grid-row: 1 / span 2; }
+.ready-btns { display: flex; gap: 8px; }
+.ready-btns .btn { min-height: 40px; padding: 0 14px; }
+.ready-panel #ready-apply-all { margin-top: 12px; }
+.check.approve-first { align-items: flex-start; margin-bottom: 16px; }
+.check.approve-first input { margin-top: 3px; }
+.check.approve-first small { display: block; color: var(--ink-2); font-size: 13.5px; margin-top: 2px; }
+@media (max-width: 380px) {
+  .ready-list li { grid-template-columns: 1fr; }
+  .ready-list .ready-btns, .ready-list .ready-tag { grid-column: 1; grid-row: auto; margin-top: 8px; justify-self: start; }
+}
+
 /* brief and lists */
 .brief-sec { margin-bottom: 14px; }
 .brief-sec:last-child { margin-bottom: 0; }
@@ -610,6 +626,13 @@ body.tabs .toast { bottom: calc(92px + env(safe-area-inset-bottom)); }
 .danger-zone > summary { color: var(--error); }
 .danger-zone .btn.danger { margin-top: 12px; }
 .banner .who { overflow-wrap: anywhere; }
+
+/* ---- Sign in with Google */
+.google-box { margin-bottom: 8px; }
+.google-btn { display: flex; align-items: center; justify-content: center; gap: 10px; }
+.google-btn svg { width: 20px; height: 20px; fill: currentColor; }
+.or-line { display: flex; align-items: center; gap: 12px; margin: 18px 0 14px; color: var(--ink-2); font-size: 13.5px; }
+.or-line::before, .or-line::after { content: ""; flex: 1; height: 1px; background: var(--line); }
 
 /* ---- your data and Google Drive */
 .drive { margin-top: 14px; padding: 14px; border: 1px solid var(--line); border-radius: var(--r-m); background: var(--surface-2); }

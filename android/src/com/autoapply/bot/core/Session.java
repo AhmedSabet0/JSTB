@@ -53,6 +53,7 @@ public final class Session {
 
     public synchronized Map<String, Object> summary() {
         List<Object> applied = new ArrayList<Object>();
+        List<Object> ready = new ArrayList<Object>();
         List<Object> filled = new ArrayList<Object>();
         List<Object> stuck = new ArrayList<Object>();
         List<Object> errors = new ArrayList<Object>();
@@ -65,6 +66,8 @@ public final class Session {
             Map<String, Object> copy = new LinkedHashMap<String, Object>(j);
             if (st.equals("applied")) {
                 applied.add(copy);
+            } else if (st.equals("ready") || st.equals("approved")) {
+                ready.add(copy);
             } else if (st.equals("dry_run_match")) {
                 filled.add(copy);
             } else if (st.equals("stuck")) {
@@ -107,7 +110,7 @@ public final class Session {
             }
         }
         return Json.obj("mode", mode, "started", started, "ended", ended == 0 ? null : ended, "applied", applied,
-                "filled", filled, "stuck", stuck, "errors", errors, "questions", questions, "skipped", skippedOut,
+                "ready", ready, "filled", filled, "stuck", stuck, "errors", errors, "questions", questions, "skipped", skippedOut,
                 "skipped_total", skippedTotal, "blockers", blockOut, "total", jobs.size());
     }
 
@@ -123,6 +126,14 @@ public final class Session {
         for (Object o : applied) {
             Map<String, Object> j = Json.map(o);
             out.add("  + " + Json.str(j, "title") + " @ " + Json.str(j, "company") + "   " + Json.str(j, "url"));
+        }
+        List<Object> ready = Json.arr(s.get("ready"));
+        if (!ready.isEmpty()) {
+            out.add("Ready to send, waiting for your yes: " + ready.size());
+            for (Object o : ready) {
+                Map<String, Object> j = Json.map(o);
+                out.add("  > " + Json.str(j, "title") + " @ " + Json.str(j, "company") + "   " + Json.str(j, "url"));
+            }
         }
         List<Object> filled = Json.arr(s.get("filled"));
         if (!filled.isEmpty()) {

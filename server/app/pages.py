@@ -66,7 +66,8 @@ and the LinkedIn session (cookies) stays on your phone.</li>
 <li>The app's update downloads, its pacing state and its debug files.</li></ul>
 
 <h2>What our server keeps</h2>
-<ul><li><b>Your account:</b> name, email address and password. The password is stored only as a salted scrypt hash.</li>
+<ul><li><b>Your account:</b> name and email address, and either a password (stored only as a salted scrypt hash) or,
+when you continue with Google, your Google account ID.</li>
 <li><b>Your data, so it is the same on every phone you sign in on:</b> your CV file and its text, the answers you save
 (the setup answers and "Your info"), your settings and job titles, the notes for the AI, the jobs you saved to apply to
 and the jobs the app handled, with their stage and notes. Your phone keeps its own copy too.</li>
@@ -89,8 +90,11 @@ notes, the job description and the form's questions. These go through our server
 forwards them to the AI model provider that produces the answer. Our server does not store this content. OpenRouter's
 privacy policy and the model provider's terms apply to it.</p>
 
-<h2>Google Drive (only if you connect it)</h2>
-<p>When you connect Google Drive in the app, our server makes a folder named "Auto Apply" in your Drive with a copy of
+<h2>Sign in with Google and Google Drive</h2>
+<p>When you continue with Google, Google gives our server your name, email address and Google account ID; they make
+your account and sign you in. The same consent connects Google Drive. An account made earlier with an email and a
+password can connect Drive in the app (Settings &rarr; Your data).</p>
+<p>With Google Drive connected, our server makes a folder named "Auto Apply" in your Drive with a copy of
 your CV, a "My answers" sheet and a "My jobs" sheet, keeps them up to date, and reads the changes you make to those
 files so they come back to the app. It uses Google's <i>drive.file</i> permission: it can see and change only the files
 it made (or that you open with it), not the rest of your Drive. It also reads your Google account's email address to
@@ -150,6 +154,7 @@ uninstall the app.</p>
 <label for="email">Email of your account</label><input id="email" name="email" type="email" required>
 <label for="password">Password</label><input id="password" name="password" type="password" required>
 <button type="submit">Delete my account</button></form>
+<p>Made your account with Google? <a href="/delete-account/google">Delete it by signing in with Google</a>.</p>
 <p class="muted">Forgot your password? Email {contact_line()} from your account's email address and we will delete the
 account within 7 days.</p></div>""")
 
@@ -165,3 +170,30 @@ def drive_result(ok, text):
 there comes back to the app.</p><p class="muted">You can close this page and go back to the app.</p>{back}</div>""")
     return page(f"Google Drive not connected - {APP_NAME}", f"""<div class="card"><h1>Google Drive is not connected</h1>
 <p class="bad">{e(text)}</p><p class="muted">Go back to the app and try again.</p>{back}</div>""")
+
+
+def signed_in(email, code):
+    """After Sign in with Google: back to the app with a one-time code (worthless without the app's own verifier)."""
+    link = f"autoapply://auth?code={e(code)}"
+    return page(f"Signed in - {APP_NAME}", f"""<div class="card"><h1>You are signed in</h1>
+<p class="ok">Signed in with Google as <b>{e(email)}</b>.</p>
+<p>Your <b>Auto Apply</b> folder in this Google Drive keeps your CV, answers and jobs. Go back to the app to continue.</p>
+<a class="btn" id="back" href="{link}">Back to Auto Apply</a>
+<p class="muted">If the app does not open, open it yourself: it finishes signing in by itself.</p></div>
+<script>setTimeout(function () {{ location.href = "{link}"; }}, 300);</script>""")
+
+
+def signin_failed(message):
+    return page(f"Not signed in - {APP_NAME}", f"""<div class="card"><h1>You are not signed in</h1>
+<p class="bad">{e(message)}</p><p class="muted">Go back to the app and try again.</p>
+<a class="btn" href="autoapply://auth">Back to Auto Apply</a></div>""")
+
+
+def delete_confirm(email, token):
+    return page(f"Delete your account - {APP_NAME}", f"""<div class="card"><h1>Delete your {e(APP_NAME)} account</h1>
+<p>Signed in with Google as <b>{e(email)}</b>.</p>
+<p class="muted">This deletes your account and everything our server keeps for it, right away: your CV, answers and jobs,
+the activity the app reported and your AI usage records. It also disconnects Google Drive (the files in your Drive stay
+yours). It cannot be undone.</p>
+<form method="post" action="/delete-account/google"><input type="hidden" name="token" value="{e(token)}">
+<button type="submit">Delete my account</button></form></div>""")

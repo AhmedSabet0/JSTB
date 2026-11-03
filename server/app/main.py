@@ -12,6 +12,7 @@
 """
 import asyncio
 import base64
+import hashlib
 import hmac
 import json
 import logging
@@ -24,7 +25,7 @@ from urllib.parse import parse_qs
 
 from fastapi import FastAPI, Request
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 
 from . import ai, db, drive, pages, records, security
 
@@ -48,6 +49,7 @@ auth_limit = security.RateLimit(12, 600)     # sign-in / sign-up attempts per IP
 email_limit = security.RateLimit(8, 900)     # sign-in attempts per email
 admin_limit = security.RateLimit(8, 900)     # admin sign-in attempts per IP
 delete_limit = security.RateLimit(6, 600)    # web account deletion attempts per IP
+google_limit = security.RateLimit(30, 600)   # Sign in with Google starts and finishes per IP
 
 
 class ApiError(Exception):
@@ -87,7 +89,7 @@ async def security_headers(request, call_next):
     resp.headers.setdefault("X-Content-Type-Options", "nosniff")
     resp.headers.setdefault("Referrer-Policy", "no-referrer")
     resp.headers.setdefault("X-Frame-Options", "DENY")
-    if request.url.path.startswith("/admin") or request.url.path.startswith("/v1/"):
+    if request.url.path.startswith(("/admin", "/v1/", "/oauth/", "/delete-account")):
         resp.headers["Cache-Control"] = "no-store"
     if request.url.path.startswith("/admin"):
         resp.headers["Content-Security-Policy"] = ADMIN_CSP
@@ -177,6 +179,7 @@ def me_json(user, request=None):
     day, hour = limits(user, s)
     flavor, code = app_info(request) if request is not None else ("", 0)
     return {"id": user["id"], "email": user["email"], "name": user["name"], "pro": bool(user["pro"]),
+            "google": bool(user["google_sub"]), "has_password": bool(user["pw_hash"]),
             "max_per_day": day, "max_per_hour": hour, "ai_per_day": ai_limit(user, s),
             "ai_used_today": ai_used(user["id"], db.today()), "report_every": REPORT_EVERY,
             "announcement": s.get("announcement", ""), "update": update_info(flavor, code, s)}
@@ -231,7 +234,8 @@ async def health():
 @app.get("/v1/config")
 async def public_config():
     s = db.settings()
-    return {"ok": True, "app_name": APP_NAME, "contact_email": CONTACT, "signups_open": s.get("signups_open") == "1"}
+    return {"ok": True, "app_name": APP_NAME, "contact_email": CONTACT, "signups_open": s.get("signups_open") == "1",
+            "google_signin": drive.configured(s), "password_signups": password_signups(s)}
 
 
 # ---------------------------------------------------------------- accounts
@@ -243,6 +247,8 @@ async def signup(request: Request):
     s = db.settings()
     if s.get("signups_open") != "1":
         raise ApiError(403, "New accounts are closed right now.", "signups_closed")
+    if not password_signups(s):
+        raise ApiError(403, "New accounts are made with Google: tap Continue with Google.", "use_google")
     email = security.clean_email(b.get("email"))
     if not email:
         raise ApiError(400, "Type a valid email address.", "bad_email")
@@ -272,6 +278,8 @@ async def login(request: Request):
         raise ApiError(429, "Too many attempts. Wait a few minutes and try again.", "rate_limited")
     row = db.one("SELECT * FROM users WHERE email = ?", (email,)) if email else None
     ok = await run_in_threadpool(security.check_password, str(b.get("password") or ""), row["pw_hash"] if row else None)
+    if row is not None and not row["pw_hash"]:
+        raise ApiError(401, "This account signs in with Google: tap Continue with Google.", "use_google")
     if row is None or not ok:
         raise ApiError(401, "Wrong email or password.", "bad_login")
     with db.tx() as t:
@@ -297,12 +305,171 @@ async def me(request: Request):
 async def delete_me(request: Request):
     user = current_user(request)
     b = await body_json(request)
-    if not await run_in_threadpool(security.check_password, str(b.get("password") or ""), user["pw_hash"]):
-        raise ApiError(400, "That password is not right.", "bad_password")
+    if user["pw_hash"]:
+        if not await run_in_threadpool(security.check_password, str(b.get("password") or ""), user["pw_hash"]):
+            raise ApiError(400, "That password is not right.", "bad_password")
+    elif security.clean_email(b.get("confirm")) != user["email"]:   # an account made with Google: type its email
+        raise ApiError(400, "Type your account's email to confirm.", "bad_confirm")
     await drive.unlink(user["id"])
     with db.tx() as t:
         t.execute("DELETE FROM users WHERE id = ?", (user["id"],))
     return {"ok": True}
+
+
+# ---------------------------------------------------------------- Sign in with Google
+CHALLENGE_RE = re.compile(r"^[A-Za-z0-9_\-]{43,128}$")
+
+
+def pkce(verifier):
+    return base64.urlsafe_b64encode(hashlib.sha256(str(verifier).encode()).digest()).decode().rstrip("=")
+
+
+def password_signups(s):
+    """New accounts with an email and a password: only until Google sign-in is set up, unless the admin allows them."""
+    return s.get("password_signups") == "1" or not drive.configured(s)
+
+
+@app.post("/v1/auth/google/start")
+async def google_start(request: Request):
+    """The Google page the app opens in the browser. `challenge` is the PKCE challenge of a verifier only the app has:
+    the code Google's page leads to is worth nothing without it."""
+    b = await body_json(request)
+    if not google_limit.allow(client_ip(request)):
+        raise ApiError(429, "Too many attempts. Wait a few minutes and try again.", "rate_limited")
+    challenge = str(b.get("challenge") or "")
+    if not CHALLENGE_RE.match(challenge):
+        raise ApiError(400, "Update the app to sign in with Google.", "bad_request")
+    try:
+        url = drive.login_url("login", challenge, text(b.get("device"), 80))
+    except drive.DriveError as e:
+        raise ApiError(403, e.message, "google_off")
+    return {"ok": True, "url": url}
+
+
+async def google_signed_in(row, code):
+    """Back from Google's page with a sign-in: the account (found by Google ID, or by the verified email, or made now),
+    its Google Drive linked with the same consent, and a one-time code for the app. Returns the page to show."""
+    data = await drive.exchange(code, row["verifier"])
+    claims = drive.id_claims(data.get("id_token"))
+    email, sub = security.clean_email(claims["email"]), str(claims["sub"])
+    if not email:
+        raise drive.DriveError("unverified", "That Google account has no usable email address.")
+    s = db.settings()
+    user = db.one("SELECT * FROM users WHERE google_sub = ?", (sub,)) or db.one("SELECT * FROM users WHERE email = ?", (email,))
+    if row["purpose"] == "delete":
+        if user is None:
+            return pages.delete_form(f"No Auto Apply account uses {email}.")
+        token = security.new_token()
+        with db.tx() as t:
+            t.execute("INSERT INTO login_codes(code_hash, user_id, purpose, expires_at) VALUES (?, ?, 'delete', ?)",
+                      (security.token_hash(token), user["id"], time.time() + 600))
+        return pages.delete_confirm(email, token)
+    created = False
+    now = time.time()
+    with db.tx() as t:
+        if user is None:
+            if s.get("signups_open") != "1":
+                raise drive.DriveError("closed", "New accounts are closed right now.")
+            pro = 1 if s.get("new_users_pro") == "1" else 0
+            cur = t.execute("INSERT INTO users(email, name, pw_hash, created_at, pro, pro_changed_at, google_sub) "
+                            "VALUES (?, ?, '', ?, ?, ?, ?)", (email, text(claims.get("name"), 80), now, pro, now if pro else None, sub))
+            uid, created = cur.lastrowid, True
+        elif user["google_sub"] and user["google_sub"] != sub:
+            raise drive.DriveError("other", f"{email} is linked to another Google account. Sign in with that one.")
+        else:
+            uid = user["id"]
+            t.execute("UPDATE users SET google_sub = ? WHERE id = ?", (sub, uid))
+        code_out = security.new_token()
+        t.execute("INSERT INTO login_codes(code_hash, user_id, purpose, app_challenge, device, created, expires_at) "
+                  "VALUES (?, ?, 'app', ?, ?, ?, ?)", (security.token_hash(code_out), uid, row["app_challenge"], row["device"],
+                                                       1 if created else 0, now + 300))
+    if drive.SCOPE in str(data.get("scope") or "").split():
+        try:
+            await drive.link_tokens(uid, data, email)        # the same Google account keeps your Auto Apply folder
+        except drive.DriveError as e:
+            log.info("user %s: signed in, Drive not linked: %s", uid, e.message)
+    return pages.signed_in(email, code_out)
+
+
+@app.post("/v1/auth/google/finish")
+async def google_finish(request: Request):
+    """The app trades the one-time code (from autoapply://auth) and its PKCE verifier for a session."""
+    b = await body_json(request)
+    if not google_limit.allow(client_ip(request)):
+        raise ApiError(429, "Too many attempts. Wait a few minutes and try again.", "rate_limited")
+    code_hash = security.token_hash(text(b.get("code"), 200))
+    with db.tx() as t:                  # one try only, right or wrong
+        row = t.execute("SELECT * FROM login_codes WHERE code_hash = ? AND purpose = 'app'", (code_hash,)).fetchone()
+        t.execute("DELETE FROM login_codes WHERE code_hash = ?", (code_hash,))
+    if row is None or row["expires_at"] < time.time():
+        raise ApiError(400, "This sign-in is too old. Tap Continue with Google again.", "bad_code")
+    if not hmac.compare_digest(pkce(b.get("verifier") or ""), row["app_challenge"]):
+        raise ApiError(400, "This sign-in did not start in this app. Tap Continue with Google again.", "bad_code")
+    return await google_session(row, b, request)
+
+
+async def google_session(row, b, request):
+    """A sign-in Google confirmed, for the app that started it: a session, after the first Drive sync."""
+    with db.tx() as t:
+        token = new_session(t, row["user_id"], text(b.get("device"), 80) or row["device"])
+    link = db.one("SELECT synced_at FROM drive_links WHERE user_id = ?", (row["user_id"],))
+    if link is not None and not link["synced_at"]:   # the first sync first: an account made again gets its data from Drive
+        try:
+            await asyncio.wait_for(asyncio.shield(drive.sync_user(row["user_id"])), timeout=25)
+        except asyncio.TimeoutError:
+            pass
+    user = db.one("SELECT * FROM users WHERE id = ?", (row["user_id"],))
+    return {"ok": True, "token": token, "user": me_json(user, request), "created": bool(row["created"])}
+
+
+@app.post("/v1/auth/google/claim")
+async def google_claim(request: Request):
+    """Back in the app without the link from the page after Google (the browser did not open the app): the app's PKCE
+    verifier alone finds the sign-in it started. `pending` until Google's page is done."""
+    b = await body_json(request)
+    if not google_limit.allow(client_ip(request)):
+        raise ApiError(429, "Too many attempts. Wait a few minutes and try again.", "rate_limited")
+    verifier = str(b.get("verifier") or "")
+    if not CHALLENGE_RE.match(verifier):
+        raise ApiError(400, "Tap Continue with Google again.", "bad_code")
+    with db.tx() as t:
+        row = t.execute("SELECT * FROM login_codes WHERE purpose = 'app' AND app_challenge = ? ORDER BY expires_at DESC",
+                        (pkce(verifier),)).fetchone()
+        if row is not None:
+            t.execute("DELETE FROM login_codes WHERE code_hash = ?", (row["code_hash"],))    # used, here or by the link
+    if row is None:
+        return {"ok": True, "pending": True}
+    if row["expires_at"] < time.time():
+        raise ApiError(400, "This sign-in is too old. Tap Continue with Google again.", "bad_code")
+    return await google_session(row, b, request)
+
+
+@app.get("/delete-account/google")
+async def delete_with_google(request: Request):
+    """Deleting an account made with Google (no password): Google says who you are first."""
+    if not delete_limit.allow(client_ip(request)):
+        return HTMLResponse(pages.delete_form("Too many attempts. Wait 10 minutes and try again."), status_code=429)
+    try:
+        url = drive.login_url("delete")
+    except drive.DriveError as e:
+        return HTMLResponse(pages.delete_form(e.message), status_code=400)
+    return RedirectResponse(url, status_code=302)
+
+
+@app.post("/delete-account/google", response_class=HTMLResponse)
+async def delete_with_google_confirm(request: Request):
+    form = parse_qs((await request.body()).decode("utf-8", "replace"))
+    code_hash = security.token_hash((form.get("token") or [""])[0])
+    with db.tx() as t:
+        row = t.execute("SELECT user_id, expires_at FROM login_codes WHERE code_hash = ? AND purpose = 'delete'",
+                        (code_hash,)).fetchone()
+        t.execute("DELETE FROM login_codes WHERE code_hash = ?", (code_hash,))
+    if row is None or row["expires_at"] < time.time():
+        return HTMLResponse(pages.delete_form("This page is too old. Start again."), status_code=400)
+    await drive.unlink(row["user_id"])
+    with db.tx() as t:
+        t.execute("DELETE FROM users WHERE id = ?", (row["user_id"],))
+    return HTMLResponse(pages.delete_form("Your account and its data were deleted.", ok=True))
 
 
 # ---------------------------------------------------------------- the AI proxy
@@ -574,6 +741,20 @@ async def unlink_drive(request: Request):
 @app.get("/oauth/google/callback", response_class=HTMLResponse)
 async def google_callback(request: Request):
     q = request.query_params
+    login = db.one("SELECT * FROM login_states WHERE state_hash = ?", (security.token_hash(q.get("state", "")),)) \
+        if q.get("state") else None
+    if login is not None:              # Sign in with Google (or deleting an account on the web)
+        with db.tx() as t:
+            t.execute("DELETE FROM login_states WHERE state_hash = ?", (login["state_hash"],))
+        failed = pages.delete_form if login["purpose"] == "delete" else pages.signin_failed
+        if q.get("error") or not q.get("code"):
+            return HTMLResponse(failed("You did not sign in with Google. Try again."), status_code=400)
+        if login["expires_at"] < time.time():
+            return HTMLResponse(failed("This sign-in page is too old. Start again."), status_code=400)
+        try:
+            return HTMLResponse(await google_signed_in(login, q["code"]))
+        except drive.DriveError as e:
+            return HTMLResponse(failed(e.message), status_code=400)
     if q.get("error"):
         return HTMLResponse(pages.drive_result(False, "Google Drive was not connected (you said no, or closed the page). "
                                                       "You can try again from the app."), status_code=400)
@@ -654,6 +835,7 @@ def settings_json():
             "min_version_play": db.setting_int(s, "min_version_play", 0, 10 ** 7),
             "google_client_id": s.get("google_client_id", ""), "has_google_secret": bool(s.get("google_client_secret")),
             "google_redirect": drive.redirect_uri() if drive.PUBLIC_URL else "", "google_ready": drive.configured(s),
+            "password_signups": s.get("password_signups") == "1",
             "public_url": drive.PUBLIC_URL}
 
 
@@ -673,7 +855,7 @@ SELECT u.id, u.email, u.name, u.created_at, u.pro, u.pro_changed_at, u.note, u.r
   (SELECT COALESCE(SUM(g.calls), 0) FROM ai_usage g WHERE g.user_id = u.id AND g.day = :today) AS ai_today,
   (SELECT COALESCE(SUM(g.tokens), 0) FROM ai_usage g WHERE g.user_id = u.id AND g.day = :today) AS tokens_today,
   (SELECT COUNT(*) FROM tokens k WHERE k.user_id = u.id) AS devices,
-  u.data_rev, u.data_at,
+  u.data_rev, u.data_at, u.google_sub != '' AS google, u.pw_hash != '' AS has_password,
   (SELECT COUNT(*) FROM drive_links d WHERE d.user_id = u.id) AS drive,
   (SELECT d.error_code FROM drive_links d WHERE d.user_id = u.id) AS drive_error
 FROM users u
@@ -864,7 +1046,7 @@ async def admin_save_settings(request: Request):
             if not low <= v <= high:
                 raise ApiError(400, f"{k} must be between {low} and {high}.", "bad_number")
             changes[k] = str(v)
-    for k in ("signups_open", "new_users_pro"):
+    for k in ("signups_open", "new_users_pro", "password_signups"):
         if k in b:
             changes[k] = "1" if b[k] else "0"
     if "announcement" in b:

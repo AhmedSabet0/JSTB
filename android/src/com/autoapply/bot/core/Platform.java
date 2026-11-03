@@ -28,6 +28,10 @@ public interface Platform {
 
     void onSessionEnd(Map<String, Object> summary, List<String> lines);
 
+    /** The applications ready to send changed: show them (a notification with Apply / Skip, or Apply all), or hide it
+     *  when none waits. Items: {id, title, company, score, url, status: ready|approved}. */
+    void onReady(List<Map<String, Object>> ready);
+
     // ------------------------------------------------------------------ dashboard actions
     /** Show the LinkedIn sign-in screen. */
     void openSignIn();

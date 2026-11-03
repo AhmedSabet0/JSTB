@@ -34,15 +34,30 @@ It prints the admin password and installs the timer that keeps the server up to 
 The keystore never goes in this repo (`.gitignore` keeps `*.jks` out). Keep a backup: every update must be signed
 with it.
 
-**3. Google Drive** (optional): make a Google Cloud OAuth client and paste it in the admin page (Settings > Google
-Drive). Steps: `server/README.md`, "Google Drive".
+**3. Sign in with Google and Google Drive**: make a Google Cloud OAuth client (scopes `openid`, `email`, `profile` and
+`drive.file`) and paste it in the admin page (Settings > Google Drive). Steps: `server/README.md`, "Sign in with Google
+and Google Drive". From then on new accounts are made with **Continue with Google** (older email accounts keep working).
+
+## Sending: you say yes first (GitHub build)
+
+Auto apply fills each Easy Apply form up to **Submit** and stops there: a notification shows it with **Apply** and
+**Skip** (or **Apply all** for several), and Home lists them under **Ready to send**. Meanwhile it goes on preparing the
+next jobs, until as many wait as your pace sends in an hour; then it waits for you. Apply sends it at your pace (the
+hourly and daily limits still count). Settings > How auto apply works >
+**Ask me before sending each application** turns this off.
+
+New questions: by default the AI answers what your CV, notes and answers already say, and asks you the rest (one
+notification, and your answer is used next time too). Settings can switch to Ask me (every new question) or Let the
+AI answer (all of them).
 
 ## Your data and Google Drive
 
 Each user's CV, setup answers, "Your info", settings and jobs are kept in their account on the server: a new phone gets
 them when they sign in, and a change on one phone reaches the others within a couple of minutes (or right away with
-Sync now). When a user connects Google Drive (Settings > Your data), the server keeps an **Auto Apply** folder in their
-Drive the same, both ways: the CV, **My answers** and **My jobs** (Google Sheets). Edits there come back to the app.
+Sync now). With Google Drive connected (it is, for accounts made with Google; others connect it in Settings > Your
+data), the server keeps an **Auto Apply** folder in their Drive the same, both ways: the CV, **My answers** and **My
+jobs** (Google Sheets). Edits there come back to the app, and an account made again with the same Google account gets
+everything back from that folder.
 
 ## Deploy and update: automatic
 

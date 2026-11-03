@@ -1,9 +1,14 @@
 # Auto Apply server
 
 The server behind the Auto Apply Android app (version 2.0 and later; 3.0 adds the activity feed, jobs people apply to
-themselves, the announcement and required updates; 3.1 keeps each user's data and syncs it with their Google Drive).
+themselves, the announcement and required updates; 3.1 keeps each user's data and syncs it with their Google Drive;
+3.2 adds Sign in with Google).
 
-- **Accounts**: people sign up in the app with an email and a password.
+- **Accounts**: people make their account in the app with **Continue with Google** (3.2): one Google consent signs them
+  in and connects their Google Drive, and an account made again with the same Google account gets its data back from
+  that Drive. Accounts made earlier with an email and a password keep signing in that way; signing in with Google with
+  the same email links them. Until the Google client is set up (below), new accounts use an email and a password; the
+  admin can keep allowing those (Settings → New accounts with an email and a password).
 - **AI proxy**: the app sends its AI requests here; the server adds the OpenRouter key and the model you choose in the
   admin page. The key never reaches a phone.
 - **Admin page** (`/admin`): every user, Pro on/off (Pro is needed for auto apply and the AI's help), applications
@@ -95,6 +100,7 @@ GitHub Actions does this with the `SERVER_URL` variable (top README).
 | Testers (Google Play closed test) | Settings → **New accounts start with Pro**, turn it off afterwards. |
 | Someone forgot their password | Their row → Details → **Reset password**, tell them the new one. |
 | Close sign-ups | Settings → turn off **Allow new accounts**. |
+| New accounts with a password too | Settings → turn on **New accounts with an email and a password** (off: Google only, once Google is set up). |
 | See what an app is doing | **Activity** tab (pick the user), or their row → Details. Live, every few seconds. |
 | Different limits for one user | Their row → Details → **Limits** (empty = the default). |
 | Sign someone out on all phones | Their row → Details → **Sign out everywhere**. |
@@ -106,10 +112,11 @@ its user marked as applied (with the channel: auto, LinkedIn or a company site, 
 app reported since the account was created. "Today" uses the time zone in `TIMEZONE` (default
 Africa/Cairo).
 
-## Google Drive (one time, in Google Cloud)
+## Sign in with Google and Google Drive (one time, in Google Cloud)
 
-The server signs users in to Google with OAuth and the `drive.file` permission (it sees only the files it makes, not the
-rest of anyone's Drive). Make the OAuth client once:
+The server signs users in with Google (OAuth, the `openid email profile` scopes) and keeps their Drive with the
+`drive.file` permission (it sees only the files it makes, not the rest of anyone's Drive). One OAuth client does both.
+Make it once:
 
 1. [console.cloud.google.com](https://console.cloud.google.com) → New project (for example "Auto Apply").
 2. APIs & Services → Library → turn on **Google Drive API** and **Google Sheets API**.
@@ -117,15 +124,23 @@ rest of anyone's Drive). Make the OAuth client once:
    Create.
 4. **Branding**: app home page `https://DOMAIN/`, privacy policy `https://DOMAIN/privacy`, authorized domain: the top
    domain (for `145-241-153-177.sslip.io` it is `sslip.io`) → Save.
-5. **Data access** → Add or remove scopes → `https://www.googleapis.com/auth/drive.file` → Update → Save.
+5. **Data access** → Add or remove scopes → tick `openid`, `.../auth/userinfo.email`, `.../auth/userinfo.profile` and
+   add `https://www.googleapis.com/auth/drive.file` → Update → Save.
 6. **Clients** → Create client → **Web application** → Authorized redirect URI `https://DOMAIN/oauth/google/callback`
    (the admin page shows it with a Copy button) → Create. Copy the **Client ID** and the **Client secret** right away
    (the secret is shown once).
 7. **Audience** → **Publish app** (In production). In "Testing" Google ends every user's connection after 7 days and
-   only test users can connect. `drive.file` is not a sensitive scope, so publishing needs no Google review.
-8. Admin page → Settings → **Google Drive** → paste the Client ID and secret → Save.
+   only test users can connect. None of these scopes is sensitive, so publishing needs no Google review.
+8. Admin page → Settings → **Google Drive** → paste the Client ID and secret → Save. (Or put `GOOGLE_CLIENT_ID` and
+   `GOOGLE_CLIENT_SECRET` in `.env`; the admin page's values win once saved.)
 
-Users then connect from the app: Settings → Your data → **Connect Google Drive**. The server looks for edits in each
+From then on the app's account step shows **Continue with Google**: Google's page opens in the browser, the server's
+page after it sends the user back to the app (`autoapply://auth`, with a one-time code that only the app that started
+can use: PKCE), and the account's Drive is connected with the same consent. Users with an older account connect their
+Drive in Settings → Your data → **Connect Google Drive**. An account made with Google is deleted on the web with
+**Delete with Google** (`/delete-account`), or in the app by typing its email.
+
+Drive, for everyone: The server looks for edits in each
 Drive every 5 minutes (`DRIVE_CHECK_EVERY`), writes changes from the phones within seconds, and the app's **Sync now**
 does both at once. If a user removes the app's access in their Google account, their app asks them to connect again.
 
@@ -163,6 +178,8 @@ docker compose cp app:/data/backup.db ./autoapply-backup-$(date +%F).db
   data (CV, answers, jobs) is stored for them, and deleted with their account.
 - Google Drive: OAuth with PKCE, one-time state, the `drive.file` scope only; refresh tokens encrypted at rest. Sheets are
   written as plain text (a cell is never read as a formula).
+- Sign in with Google: the ID token comes straight from Google's token endpoint (TLS) and is checked for the issuer, this
+  client, the expiry and a verified email. The app gets a one-time code (5 minutes, one try) bound to its PKCE verifier.
 - Only Caddy is published (ports 80/443). The app container is reachable only inside the Docker network.
 - Keep `.env` private; it holds the admin password.
 
@@ -174,9 +191,11 @@ App, with `Authorization: Bearer <token>`:
 |---|---|---|
 | POST | `/v1/auth/signup` | `{email, password, name, device}` → `{token, user}` |
 | POST | `/v1/auth/login` | `{email, password, device}` → `{token, user}` |
+| POST | `/v1/auth/google/start` | `{challenge, device}` (the app's PKCE challenge) → `{url}`: Google's page |
+| POST | `/v1/auth/google/finish` | `{code, verifier, device}` (from `autoapply://auth`) → `{token, user, created}` |
 | POST | `/v1/auth/logout` | ends this token |
 | GET | `/v1/me` | `{user: {pro, max_per_day, ai_per_day, ai_used_today}}` |
-| POST | `/v1/me/delete` | `{password}`: deletes the account and its data |
+| POST | `/v1/me/delete` | `{password}`, or `{confirm: email}` for an account made with Google: deletes the account and its data |
 | POST | `/v1/ai/chat` | `{messages, max_tokens, temperature, purpose}` → OpenRouter's answer |
 | POST | `/v1/report` | `{start, running, mode, message, events: [...]}` → `{stop, reason, pro, max_per_day}` |
 | GET | `/v1/me/data?since=REV` | what changed since that revision: `{rev, records: [{k, id, d, rev, t}], more}` (deleted: `d` null) |
@@ -184,7 +203,7 @@ App, with `Authorization: Bearer <token>`:
 | GET / POST | `/v1/me/cv` | the CV file `{name, data (base64), text, sha256, rev}`; POST `{name, data, text, base, t}` |
 | GET | `/v1/me/drive` | Google Drive: `{available, connected, email, folder_url, files, synced_at, error, reconnect}` |
 | POST | `/v1/me/drive/link`, `/sync`, `/unlink` | the Google page to open; sync now; disconnect |
-| GET | `/v1/config` | `{app_name, contact_email, signups_open}` |
+| GET | `/v1/config` | `{app_name, contact_email, signups_open, google_signin, password_signups}` |
 
 A change to an item that also changed on the server since the phone's `base` revision is kept only when it is the newer
 one (times are moved to the server's clock with the phone's `now`); otherwise the answer carries the server's item.

@@ -67,6 +67,10 @@ public class UiServer {
             EVENTS.add("session-end");
         }
 
+        public void onReady(List<Map<String, Object>> items) {
+            EVENTS.add("ready:" + items.size());
+        }
+
         public void openSignIn() {
             EVENTS.add("open-signin");
             signedIn = true;  // the test pretends you signed in on the LinkedIn screen

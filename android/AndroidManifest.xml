@@ -2,7 +2,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="com.autoapply.bot"
     android:versionCode="7"
-    android:versionName="3.1">
+    android:versionName="3.2">
 
     <uses-sdk android:minSdkVersion="24" android:targetSdkVersion="36" />
 
@@ -52,12 +52,14 @@
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:mimeType="text/plain" />
             </intent-filter>
-            <!-- "Back to Auto Apply" on the page after connecting Google Drive (autoapply://drive). -->
+            <!-- Back from Google's page: after connecting Google Drive (autoapply://drive) and after Sign in with Google
+                 (autoapply://auth?code=..., a one-time code that works only with this app's own PKCE verifier). -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="autoapply" android:host="drive" />
+                <data android:scheme="autoapply" android:host="auth" />
             </intent-filter>
         </activity>
 

@@ -35,15 +35,33 @@ form and send it. That is what keeps it inside Play's rules (see `PLAY_CONSOLE.m
 
 ## Auto apply (GitHub build)
 
-Searches LinkedIn for your job titles, scores each job against your CV with the AI, fills and sends Easy Apply forms at
-your pace in the background, asks you questions it cannot answer (with suggestions from your CV, or lets the AI
-answer), and gives you a summary at the end. LinkedIn runs inside the app in a page drawn on a private virtual display;
-a foreground service keeps it going with the screen off. Details: `core/Bot.java`, `core/LinkedIn.java`, `assets/li.js`.
+Searches LinkedIn for your job titles, scores each job against your CV with the AI, fills Easy Apply forms in the
+background, asks you questions it cannot answer (with suggestions from your CV), and gives you a summary at the end.
+LinkedIn runs inside the app in a page drawn on a private virtual display; a foreground service keeps it going with the
+screen off. Details: `core/Bot.java`, `core/LinkedIn.java`, `assets/li.js`.
+
+You say yes before anything is sent (`APPROVE_FIRST`, on by default; Settings > How auto apply works):
+
+- Each form is filled up to Submit and closed without sending; the job's status is `ready` and its answers are kept.
+- One notification (`Notifs.ready`, channel "Applications to send") lists them: **Apply** / **Skip** for one,
+  **Apply all** / **See them** for more (`app/ActionReceiver.java`). Home shows the same list under **Ready to send**
+  (`/api/ready`).
+- Apply makes it `approved`: a running bot sends it next (in the wait between rounds too), at your pace (the hourly and
+  daily limits count); when the bot is not running, a short run starts that only sends those (`Bot.Options.sendOnly`).
+  It is not scored again. Skip makes it `user_skipped`.
+- Meanwhile the bot goes on preparing the next jobs (no pacing waits while preparing; the pace is for sending), until
+  as many wait as your hourly limit (at least 3, `Bot.readyCap`); then it waits for your answers before it prepares
+  more (a one-round run ends its round there).
+
+New questions (`NEW_QUESTIONS`, Settings > How auto apply works): `unsure` (default) has the AI answer when it is sure
+(`Ai.sureAnswer`, sure at 75 or more of 100: the CV, the notes or your answers say it) and asks you the rest, with its
+guess among the suggestions; `ask` asks you every new question; `ai` lets the AI answer all. Your answers are kept and
+used next time, in every mode.
 
 How form questions are answered (`core/Profile.java`, both builds):
 
-- Years of experience with something in your CV: the years since you graduated. Not in your CV: your info, then you
-  (ask-me mode) or the AI.
+- Years of experience with something in your CV: the years since you graduated. Not in your CV: your info, then the
+  AI if it is sure, else you (or the AI, or you only, per the setting).
 - "How many" questions get a number only. Notice period in days (weeks or months when the question asks).
 - Salary per month in your currency; converted with today's rate when the question names another currency, x12 when it
   asks per year, and the matching range when the form offers ranges.
@@ -62,6 +80,11 @@ CV. Each item is a record; `sync.json` remembers what was synced and the server'
 - It runs a few seconds after you change something, every 2 minutes while the app is open (every minute while auto
   apply runs), after signing in, and with Sync now.
 - A new phone: sign in, and the setup is skipped when the account has a CV and finished setup ("Welcome back").
+- Sign in with Google (3.2, `Account.googleStart` / `googleFinish`): the app opens the server's Google page in the
+  browser with a PKCE challenge; the server's page after Google opens `autoapply://auth?code=...`; the app trades the
+  code and its verifier for a sign-in (`MainActivity` then calls `window.aaGoogle`). The same consent connects Google
+  Drive, so a new account made with that Google account gets its data from Drive first. Email accounts made earlier
+  still sign in with their password.
 - Another account on the same phone: this phone's data is replaced by that account's (the first account keeps its own).
 - Google Drive: Settings > Your data. The app opens Google's page in the browser; after that the server does the work
   (see `server/README.md`). Back in the app, it syncs (the server reads Drive, then the phone takes what changed).
@@ -88,7 +111,7 @@ Needs a JDK, the Ubuntu packages `aapt aapt2 dalvik-exchange zipalign apksigner`
 export KEYSTORE=/path/to/autoapply.jks KS_PASS=...    # your signing key (never in this repo)
 ./build.sh                                           # out/github/AutoApply.apk  (updates itself from GitHub)
 SERVER_URL=https://DOMAIN FLAVOR=play ./build.sh     # out/play/AutoApply.aab    (for Google Play)
-VERSION_CODE=108 VERSION_NAME=3.1 ./build.sh         # a given version
+VERSION_CODE=108 VERSION_NAME=3.2 ./build.sh         # a given version
 ```
 
 GitHub Actions builds both on every push and publishes a release for every `v*` tag (see the top README). The Play

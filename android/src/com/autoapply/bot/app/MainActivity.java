@@ -304,8 +304,19 @@ public final class MainActivity extends Activity {
     private void handle(Intent intent) {
         if (intent != null && Intent.ACTION_VIEW.equals(intent.getAction()) && intent.getData() != null
                 && "autoapply".equals(intent.getData().getScheme())) {
-            intent.setAction(null);  // back from connecting Google Drive: onResume tells the screens
+            final Uri back = intent.getData();
+            intent.setAction(null);  // back from Google's page: onResume tells the screens
             closePanes();
+            final String code = back.getQueryParameter("code");
+            if ("auth".equals(back.getHost()) && code != null && !code.isEmpty()) {   // Sign in with Google
+                bridgePool.execute(new Runnable() {
+                    @Override
+                    public void run() {
+                        String r = platform.api.handle("/api/account/google-finish", Json.stringify(Json.obj("code", code)));
+                        js("window.aaGoogle && window.aaGoogle(" + Json.stringify(r) + ")");
+                    }
+                });
+            }
             return;
         }
         if (intent != null && Intent.ACTION_SEND.equals(intent.getAction())) {
@@ -329,6 +340,9 @@ public final class MainActivity extends Activity {
         String open = intent == null ? null : intent.getStringExtra("open");
         if ("signin".equals(open)) {
             showSignIn();
+        } else if ("ready".equals(open)) {   // the notification of applications ready to send
+            closePanes();
+            dash.evaluateJavascript("window.aaShowReady && window.aaShowReady()", null);
         } else if ("question".equals(open) || "brief".equals(open)) {
             closePanes();
             dash.evaluateJavascript("window.aaShow && window.aaShow('dashboard')", null);

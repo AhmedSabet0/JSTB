@@ -40,7 +40,7 @@ public final class Sync {
     /** Settings that follow you to every phone (the update settings stay per phone). */
     static final String[] SETTING_KEYS = {"KEYWORDS", "LOCATION", "DATE_POSTED", "WORK_TYPE", "EXPERIENCE",
         "PAGES_PER_KEYWORD", "SEARCH_EVERY_MIN", "PER_HOUR", "PER_DAY", "MIN_SCORE", "SKIP_COMPANIES",
-        "SKIP_TITLE_WORDS", "NEW_QUESTIONS", "ASK_TIMEOUT_MIN", "DAILY_GOAL", "SETUP_DONE", "ABOUT_ME"};
+        "SKIP_TITLE_WORDS", "NEW_QUESTIONS", "ASK_TIMEOUT_MIN", "DAILY_GOAL", "SETUP_DONE", "ABOUT_ME", "APPROVE_FIRST"};
     static final int BATCH = 400;
 
     private final Engine engine;

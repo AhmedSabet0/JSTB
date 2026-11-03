@@ -11,6 +11,12 @@ writes cover letters, and tracks your applications. It **never sends an applicat
 drives LinkedIn, and runs nothing in the background**. The automatic LinkedIn bot exists only in the GitHub build
 (`assets/li.js`, the background service and their permissions are left out of the bundle).
 
+About "ask before sending" (3.2, GitHub build): there the bot fills each Easy Apply form and waits for the user's
+**Apply** in a notification. That is a better experience, but it does not make the bot fit for Play: the app still
+signs in to LinkedIn and searches, opens and fills its pages automatically for the user, which LinkedIn's User
+Agreement does not allow (no bots or automated access), and Play's Device and Network Abuse policy does not allow apps
+that use a service in a way that breaks its terms. Keep the bot out of the Play build.
+
 Still keep in mind:
 
 - **Payments.** Pro (AI help) is switched on by you in the admin page; the app takes no payments and never says how to
@@ -58,7 +64,7 @@ English (United States), App, Free. Accept the declarations.
 |---|---|
 | Privacy policy | `https://DOMAIN/privacy` |
 | Ads | No |
-| App access | All or some functionality is restricted: add a reviewer account (create it in the app, turn its **Pro** on in the admin page) with the note below |
+| App access | All or some functionality is restricted: add a reviewer account with an email and a password (new accounts are made with Google, so in the admin page turn on **New accounts with an email and a password**, create the account in the app, turn it off again, and turn the account's **Pro** on) with the note below |
 | Content rating | Category: Utility, Productivity, Communication or Other. Answer No to everything |
 | Target audience | 18 and over |
 | News app / Government / Financial features / Health | No / No / none / none |
@@ -67,7 +73,8 @@ English (United States), App, Free. Accept the declarations.
 
 **App access note for the reviewer**
 
-> Sign in with the account above (it has AI help on). The setup asks for a CV (any text-based PDF works) and a few
+> Sign in with the email and password above ("Sign in" under Continue with Google; it has AI help on). The setup asks
+> for a CV (any text-based PDF works) and a few
 > answers. Then Home has job searches; on any job page (LinkedIn app, Chrome, or the app's own browser) tap Share and
 > pick "Add to Auto Apply", or paste a job link on the Jobs tab. Open the job: its sheet has your answers to copy, a
 > cover letter, and "Open the form here", where "Fill the form" fills a company's application form for you to check
@@ -98,9 +105,10 @@ rows below say "not ephemeral" and Files and docs is collected.
 | Files and docs (the CV file) | Yes: kept in the account so every phone has it, and copied to the user's Google Drive when they connect it | Required | No | App functionality |
 | App activity > App interactions (jobs added and applied to: title, company, link, stage, notes; the app's activity lines) | Yes | Required | No | App functionality, Analytics |
 
-Not collected: location, contacts, photos, device IDs, crash logs, financial info. The Google sign-in for Drive is the
-user's choice (Settings > Your data > Connect Google Drive); the app gets the drive.file permission only (the files it
-makes), and the server keeps that sign-in encrypted.
+Not collected: location, contacts, photos, device IDs, crash logs, financial info. Since 3.2 new accounts are made with
+Sign in with Google: Google gives the server the user's name, email and Google account ID (the rows above), and the
+same consent gives the drive.file permission (only the files the app makes), kept encrypted on the server. Users with
+an older email account connect Drive by choice (Settings > Your data > Connect Google Drive).
 
 ## 7. Store listing (Grow > Store presence > Main store listing)
 
@@ -121,8 +129,9 @@ makes), and the server keeps that sign-in encrypted.
 > • Track every application: applied, interview, offer, rejected
 > • A daily goal to keep you going
 >
-> You answer the questions forms ask most once, during a 3-minute setup. Your CV and answers stay on your phone. You
-> need an Auto Apply account; AI help is switched on for your account by the service.
+> You answer the questions forms ask most once, during a 3-minute setup. Your CV and answers are kept in your account,
+> so every phone you sign in on has them, and in your own Google Drive. You sign in with Google; AI help is switched
+> on for your account by the service.
 >
 > Auto Apply is not affiliated with, endorsed by or sponsored by LinkedIn or any job site.
 

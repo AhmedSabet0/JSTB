@@ -17,6 +17,8 @@ import java.util.Map;
 public final class Store {
     public static final String[][] STATUS = {
         {"applied", "Applied", "good"},
+        {"ready", "Ready to send", "info"},
+        {"approved", "Sending (you said yes)", "info"},
         {"skipped_low_score", "Low match", ""},
         {"no_easy_apply", "No Easy Apply", ""},
         {"already_applied", "Already applied", ""},
@@ -54,6 +56,9 @@ public final class Store {
         }
         if ("stuck".equals(status) || "needs_answer".equals(status) || "answered".equals(status) || "error".equals(status)) {
             return "problems";
+        }
+        if ("ready".equals(status) || "approved".equals(status)) {
+            return "ready";
         }
         return "skipped";
     }
@@ -131,6 +136,17 @@ public final class Store {
     public synchronized boolean seen(String jobId, List<String> retry) {
         Map<String, Object> j = find(jobId);
         return j != null && !retry.contains(Json.str(j, "status"));
+    }
+
+    /** One job as it was recorded (without its form's questions), or null. */
+    public synchronized Map<String, Object> job(String jobId) {
+        Map<String, Object> j = find(jobId);
+        if (j == null) {
+            return null;
+        }
+        Map<String, Object> out = new LinkedHashMap<String, Object>(j);
+        out.remove("qa");
+        return out;
     }
 
     public synchronized String statusOf(String jobId) {
@@ -240,6 +256,41 @@ public final class Store {
             ids.add(Json.str(j, "id"));
         }
         return ids;
+    }
+
+    /** Applications filled up to Submit that wait for your OK (ready), or that you said yes to (approved), newest first. */
+    public synchronized List<Map<String, Object>> ready() {
+        List<Map<String, Object>> out = new ArrayList<Map<String, Object>>();
+        for (int k = jobs.size() - 1; k >= 0; k--) {
+            Map<String, Object> j = jobs.get(k);
+            String st = Json.str(j, "status");
+            if ("ready".equals(st) || "approved".equals(st)) {
+                Map<String, Object> d = new LinkedHashMap<String, Object>(j);
+                d.remove("qa");
+                d.put("label", label(st));
+                out.add(d);
+            }
+        }
+        return out;
+    }
+
+    /** Moves these jobs from status `from` to `to` (others are left alone). Returns how many moved. */
+    public synchronized int changeStatus(List<String> ids, String from, String to) {
+        int n = 0;
+        for (String id : ids) {
+            Map<String, Object> j = id == null ? null : find(id);
+            if (j != null && from.equals(Json.str(j, "status"))) {
+                j.put("status", to);
+                if ("user_skipped".equals(to)) {
+                    j.put("reason", "You said no to sending it");
+                }
+                n++;
+            }
+        }
+        if (n > 0) {
+            saveJobs();
+        }
+        return n;
     }
 
     /** Forget stuck / error / waiting jobs so they are tried again. */

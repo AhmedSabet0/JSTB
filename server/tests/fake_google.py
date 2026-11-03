@@ -37,8 +37,9 @@ class FakeGoogle:
         self.files = {}
         self.calls = []
         self.failures = []           # [(method, path part, response, times left)]
-        self.grant_scope = SCOPE     # what the user ticks on the consent screen
-        self.email = "sara.drive@gmail.com"
+        self.grant_scope = None      # what the user ticks on the consent screen (None: all that was asked)
+        self.email = "sara.drive@gmail.com"   # the Google account that says yes
+        self.name = "Sara"
 
     # ---------------------------------------------------------------- what a person does
     def consent(self, auth_url):
@@ -46,11 +47,24 @@ class FakeGoogle:
         q = parse_qs(auth_url.split("?", 1)[1])
         one = {k: v[0] for k, v in q.items()}
         assert one["client_id"] == self.client_id and one["response_type"] == "code" and one["code_challenge_method"] == "S256"
-        assert one["access_type"] == "offline" and SCOPE in one["scope"].split()
         code = "code-" + secrets.token_hex(8)
         self.codes[code] = {"challenge": one["code_challenge"], "redirect_uri": one["redirect_uri"], "email": self.email,
-                            "scope": self.grant_scope}
+                            "scope": self.grant_scope if self.grant_scope is not None else one["scope"],
+                            "offline": one.get("access_type") == "offline", "name": self.name}
         return {"code": code, "state": one["state"]}
+
+    @staticmethod
+    def sub_of(email):
+        return "1" + str(int(hashlib.sha256(email.encode()).hexdigest()[:14], 16))
+
+    def id_token(self, email, name, aud=None, exp=None, verified=True):
+        def part(d):
+            return base64.urlsafe_b64encode(json.dumps(d).encode()).decode().rstrip("=")
+        now = int(time.time())
+        return ".".join([part({"alg": "RS256", "kid": "fake", "typ": "JWT"}),
+                         part({"iss": "https://accounts.google.com", "aud": aud or self.client_id, "sub": self.sub_of(email),
+                               "email": email, "email_verified": verified, "name": name, "iat": now,
+                               "exp": exp if exp is not None else now + 3600}), "fake-signature"])
 
     def find_app(self, key):
         return [f for f in self.files.values() if (f.get("appProperties") or {}).get("autoapply") == key and not f["trashed"]]
@@ -110,7 +124,7 @@ class FakeGoogle:
 
     def expire_access(self):
         for tok in self.access:
-            self.access[tok] = (self.access[tok][0], 0)
+            self.access[tok] = (self.access[tok][0], 0, self.access[tok][2])
 
     def fail(self, method, part, response, times=1):
         self.failures.append([method, part, response, times])
@@ -134,6 +148,8 @@ class FakeGoogle:
         who = self._who(request)
         if who is None:
             return err(401, "Request had invalid authentication credentials.", "authError", "UNAUTHENTICATED")
+        if who == "no-drive-scope":
+            return err(403, "Request had insufficient authentication scopes.", "insufficientPermissions", "PERMISSION_DENIED")
         if host == "drive.google.test":
             return self._drive(request, path, who)
         if host == "sheets.google.test":
@@ -151,30 +167,34 @@ class FakeGoogle:
             want = base64.urlsafe_b64encode(hashlib.sha256(form.get("code_verifier", "").encode()).digest()).decode().rstrip("=")
             if want != c["challenge"]:
                 return httpx.Response(400, json={"error": "invalid_grant", "error_description": "Invalid code verifier."})
-            rt = "1//refresh-" + secrets.token_hex(8)
-            self.refresh[rt] = c["email"]
-            at = self._access(c["email"])
-            return httpx.Response(200, json={"access_token": at, "expires_in": 3599, "refresh_token": rt,
-                                             "scope": c["scope"], "token_type": "Bearer"})
+            out = {"access_token": self._access(c["email"], c["scope"]), "expires_in": 3599, "scope": c["scope"],
+                   "token_type": "Bearer"}
+            if c["offline"]:
+                rt = "1//refresh-" + secrets.token_hex(8)
+                self.refresh[rt] = (c["email"], c["scope"])
+                out["refresh_token"] = rt
+            if "openid" in c["scope"].split():
+                out["id_token"] = self.id_token(c["email"], c["name"])
+            return httpx.Response(200, json=out)
         if form.get("grant_type") == "refresh_token":
-            email = self.refresh.get(form.get("refresh_token", ""))
-            if email is None:
+            hit = self.refresh.get(form.get("refresh_token", ""))
+            if hit is None:
                 return httpx.Response(400, json={"error": "invalid_grant", "error_description": "Token has been expired or revoked."})
-            return httpx.Response(200, json={"access_token": self._access(email), "expires_in": 3599, "scope": SCOPE,
+            return httpx.Response(200, json={"access_token": self._access(*hit), "expires_in": 3599, "scope": hit[1],
                                              "token_type": "Bearer"})
         return httpx.Response(400, json={"error": "unsupported_grant_type"})
 
     def _revoke(self, form):
         tok = form.get("token", "")
-        email = self.refresh.pop(tok, None)
-        if email:
-            for k in [k for k, v in self.access.items() if v[0] == email]:
+        hit = self.refresh.pop(tok, None)
+        if hit:
+            for k in [k for k, v in self.access.items() if v[0] == hit[0]]:
                 del self.access[k]
         return httpx.Response(200, json={})
 
-    def _access(self, email):
+    def _access(self, email, scope=SCOPE):
         at = "ya29.fake-" + secrets.token_hex(10)
-        self.access[at] = (email, time.time() + 3600)
+        self.access[at] = (email, time.time() + 3600, scope)
         return at
 
     def _who(self, request):
@@ -184,7 +204,7 @@ class FakeGoogle:
         hit = self.access.get(h[7:])
         if hit is None or hit[1] < time.time():
             return None
-        return hit[0]
+        return hit[0] if SCOPE in hit[2].split() else "no-drive-scope"
 
     # ---- Drive
     def _new_id(self):

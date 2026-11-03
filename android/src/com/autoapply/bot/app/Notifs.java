@@ -22,10 +22,12 @@ final class Notifs {
     static final String CH_RUN = "run";
     static final String CH_ASK = "questions";
     static final String CH_BRIEF = "brief";
+    static final String CH_READY = "ready";
     static final int ID_RUN = 1;
     static final int ID_ASK = 2;
     static final int ID_BRIEF = 3;
     static final int ID_SIGNIN = 4;
+    static final int ID_READY = 6;
     static final String REPLY_KEY = "reply";
 
     private Notifs() {
@@ -46,10 +48,13 @@ final class Notifs {
         ask.setDescription("Application questions the bot needs your answer for, and sign-in requests.");
         NotificationChannel brief = new NotificationChannel(CH_BRIEF, "Session brief", NotificationManager.IMPORTANCE_DEFAULT);
         brief.setDescription("What the bot applied to and what got stuck, when a session ends.");
+        NotificationChannel ready = new NotificationChannel(CH_READY, "Applications to send", NotificationManager.IMPORTANCE_HIGH);
+        ready.setDescription("Applications filled up to Submit: Apply sends one, Apply all sends them all.");
         NotificationManager m = nm(c);
         m.createNotificationChannel(run);
         m.createNotificationChannel(ask);
         m.createNotificationChannel(brief);
+        m.createNotificationChannel(ready);
     }
 
     @SuppressWarnings("deprecation")
@@ -180,6 +185,57 @@ final class Notifs {
         nm(c).notify(ID_ASK, b.build());
     }
 
+    // ------------------------------------------------------------------ ready to send: your yes first
+    /** One notification for the applications filled up to Submit: Apply / Skip for one, Apply all / See them for more. */
+    static void ready(Context c, List<Map<String, Object>> items) {
+        List<Map<String, Object>> waiting = new ArrayList<Map<String, Object>>();
+        for (Map<String, Object> j : items) {
+            if ("ready".equals(Json.str(j, "status"))) {
+                waiting.add(j);
+            }
+        }
+        if (waiting.isEmpty()) {
+            nm(c).cancel(ID_READY);
+            return;
+        }
+        Map<String, Object> first = waiting.get(0);
+        Notification.Builder b = builder(c, CH_READY)
+                .setAutoCancel(false)
+                .setOnlyAlertOnce(true)
+                .setCategory(Notification.CATEGORY_RECOMMENDATION)
+                .setContentIntent(openApp(c, "ready", 70));
+        if (waiting.size() == 1) {
+            Map<String, String> one = new java.util.HashMap<String, String>();
+            one.put("id", Json.str(first, "id"));
+            b.setContentTitle("Ready to send: " + Json.str(first, "title"))
+                    .setContentText(line(first))
+                    .addAction(new Notification.Action.Builder(null, "Apply", action(c, ActionReceiver.APPROVE, 71, one, false)).build())
+                    .addAction(new Notification.Action.Builder(null, "Skip", action(c, ActionReceiver.SKIP, 72, one, false)).build());
+        } else {
+            Notification.InboxStyle list = new Notification.InboxStyle();
+            for (int k = 0; k < Math.min(6, waiting.size()); k++) {
+                list.addLine(Json.str(waiting.get(k), "title") + " · " + line(waiting.get(k)));
+            }
+            if (waiting.size() > 6) {
+                list.setSummaryText("and " + (waiting.size() - 6) + " more");
+            }
+            Map<String, String> all = new java.util.HashMap<String, String>();
+            all.put("all", "1");
+            b.setContentTitle(waiting.size() + " applications ready to send")
+                    .setContentText("Filled up to Submit. Apply all, or see them one by one.")
+                    .setStyle(list)
+                    .addAction(new Notification.Action.Builder(null, "Apply all", action(c, ActionReceiver.APPROVE, 73, all, false)).build())
+                    .addAction(new Notification.Action.Builder(null, "See them", openApp(c, "ready", 74)).build());
+        }
+        nm(c).notify(ID_READY, b.build());
+    }
+
+    private static String line(Map<String, Object> j) {
+        String company = Json.str(j, "company");
+        Object score = j.get("score");
+        return (company.isEmpty() ? "" : company + " · ") + (score == null ? "" : "match " + Json.str(j, "score") + "/10");
+    }
+
     static void cancel(Context c, int id) {
         nm(c).cancel(id);
     }
@@ -203,6 +259,7 @@ final class Notifs {
         int filled = Json.arr(s.get("filled")).size();
         int stuck = Json.arr(s.get("stuck")).size();
         int waiting = Json.arr(s.get("questions")).size();
+        int ready = Json.arr(s.get("ready")).size();
         long skipped = Json.num(s, "skipped_total", 0);
         String title;
         if ("apply".equals(mode)) {
@@ -213,6 +270,9 @@ final class Notifs {
             title = "Scoring finished: " + filled + " good match" + (filled == 1 ? "" : "es");
         }
         List<String> parts = new ArrayList<String>();
+        if (ready > 0) {
+            parts.add(ready + " ready to send");
+        }
         if (stuck > 0) {
             parts.add(stuck + " stuck");
         }

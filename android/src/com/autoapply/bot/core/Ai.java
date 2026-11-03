@@ -469,9 +469,51 @@ public final class Ai {
         return Json.obj("suggestions", list, "reason", Util.cut(Json.str(data, "reason").trim(), 240));
     }
 
+    /** The AI's answer and how sure it is (0 to 100) that the answer is true for you. */
+    public static final class Sure {
+        public final Object answer;
+        public final int sure;
+        public final String why;
+
+        Sure(Object answer, int sure, String why) {
+            this.answer = answer;
+            this.sure = sure;
+            this.why = why;
+        }
+    }
+
     /** The AI's own answer: a String, a List of options (multi), or null. */
     public Object answer(String question, String kind, List<String> options, Map<String, Object> known, String job,
                          String hint, String placeholder, List<String> rejected, int maxlen) {
+        return answer(question, kind, options, known, job, hint, placeholder, rejected, maxlen, false).answer;
+    }
+
+    /** The AI's answer, with how sure it is: what the CV, the notes or your answers say scores high; a guess, a
+     *  preference or anything only you can know scores low. */
+    public Sure sureAnswer(String question, String kind, List<String> options, Map<String, Object> known, String job,
+                           String hint, String placeholder, List<String> rejected, int maxlen) {
+        return answer(question, kind, options, known, job, hint, placeholder, rejected, maxlen, true);
+    }
+
+    static int sureOf(Object raw) {
+        double v;
+        if (raw instanceof Number) {
+            v = ((Number) raw).doubleValue();
+        } else {
+            Matcher m = Pattern.compile("\\d+(?:\\.\\d+)?").matcher(raw == null ? "" : String.valueOf(raw));
+            if (!m.find()) {
+                return 0;
+            }
+            v = Double.parseDouble(m.group());
+        }
+        if (v > 0 && v < 1) {
+            v *= 100;   // 0.9 meant 90 (a bare 1 stays 1: not sure, so you are asked)
+        }
+        return (int) Math.max(0, Math.min(100, Math.round(v)));
+    }
+
+    private Sure answer(String question, String kind, List<String> options, Map<String, Object> known, String job,
+                        String hint, String placeholder, List<String> rejected, int maxlen, boolean rate) {
         List<String> p = parts(question, kind, options, known, job, placeholder, maxlen);
         if (hint != null && !hint.isEmpty() && rejected != null && !rejected.isEmpty()) {
             p.add("LINKEDIN REJECTED THE PREVIOUS ANSWER(S) " + Json.stringify(rejected) + " WITH THE MESSAGE: \"" + hint
@@ -480,9 +522,24 @@ public final class Ai {
             p.add("THE PREVIOUS ANSWER WAS REJECTED WITH: " + hint);
         }
         p.add("RULE: " + rule(kind));
-        p.add("Return ONLY {\"answer\": ...}");
-        String out = chat(Json.list(msg("system", ANSWER_SYSTEM), msg("user", Util.join("\n\n", p))), 300);
-        Object a = Json.firstObject(out).get("answer");
+        if (rate) {
+            p.add("SURE: how sure you are, from 0 to 100, that the answer is true for this candidate. 90 or more only when the "
+                    + "CV, the candidate notes or the known answers say it, or it follows directly from them. 50 or less when "
+                    + "you guess, when it is a preference (pay, relocation, work setting, start date) they do not state, or "
+                    + "anything only the candidate can know.");
+            p.add("Return ONLY {\"answer\": ..., \"sure\": <0-100>, \"why\": \"<a few words>\"}");
+        } else {
+            p.add("Return ONLY {\"answer\": ...}");
+        }
+        String out = chat(Json.list(msg("system", ANSWER_SYSTEM), msg("user", Util.join("\n\n", p))), rate ? 360 : 300);
+        Map<String, Object> d = Json.firstObject(out);
+        int sure = rate ? sureOf(d.get("sure")) : 100;
+        String why = Util.cut(Json.str(d, "why").trim(), 160);
+        return new Sure(clean(d.get("answer"), kind, options), sure, why);
+    }
+
+    /** The answer the AI gave, in the form the field takes; null when it gave none that fits. */
+    static Object clean(Object a, String kind, List<String> options) {
         if (a == null || "".equals(a) || (a instanceof List && Json.arr(a).isEmpty())) {
             return null;
         }

@@ -171,6 +171,8 @@
       if (!state.setup.setup_done) startSetup();
     }
     renderHome();
+    const rsig = `${state.ready || 0}:${state.approved || 0}:${state.running ? 1 : 0}`;
+    if (rsig !== readySig) { readySig = rsig; loadReady(); }
     renderDesk();
     renderAnnounce();
     renderForceUpdate();
@@ -313,16 +315,21 @@
     return accMode === 'signup' ? 'Create account' : 'Sign in';
   }
   function setAccMode(mode) {
+    if (mode === 'signup' && !pwSignups()) mode = 'login';   // new accounts are made with Google
     accMode = mode;
     document.querySelectorAll('[data-accmode]').forEach((b) => b.classList.toggle('on', b.dataset.accmode === mode));
     $('w-acc-name-field').hidden = mode !== 'signup';
     $('w-acc-pw').autocomplete = mode === 'signup' ? 'new-password' : 'current-password';
     $('w-acc-pw-hint').hidden = mode !== 'signup';
-    $('w-acc-title').textContent = mode === 'signup' ? 'Create your account' : 'Sign in';
+    $('w-acc-title').textContent = google() && !pwSignups() ? 'Your account' : mode === 'signup' ? 'Create your account' : 'Sign in';
+    $('w-acc-seg').hidden = !pwSignups();
+    $('w-google-box').hidden = !google();
     $('w-acc-err').hidden = true;
     accHelp();
     wLive();
   }
+  const google = () => !!acc().google_signin;
+  const pwSignups = () => acc().password_signups !== false;
   document.querySelectorAll('[data-accmode]').forEach((b) => b.addEventListener('click', () => setAccMode(b.dataset.accmode)));
   function accHelp() {
     const c = acc().contact;
@@ -335,17 +342,19 @@
     $('w-acc-form').hidden = !!a.signed_in;
     $('w-acc-who').textContent = a.email || '';
     $('w-acc-lead').textContent = a.signed_in ? 'You are signed in. Continue to add your CV.'
-      : 'Your account connects the AI that reads jobs and fills in forms. No AI key needed.';
+      : google() && !pwSignups() ? 'Continue with Google to make your account, or to sign in. It connects the AI that reads jobs and fills in forms.'
+        : 'Your account connects the AI that reads jobs and fills in forms. No AI key needed.';
     if (a.signed_in) { $('w-acc-title').textContent = 'Your account'; return; }
     $('w-acc-server-field').hidden = !!a.server_built_in;
     if (!a.server_built_in && !$('w-acc-server').value) $('w-acc-server').value = (a.server || '').replace(/^https:\/\//, '');
     if (a.email && !$('w-acc-email').value) { $('w-acc-email').value = a.email; setAccMode('login'); } else setAccMode(accMode);
     if (!accInfoAsked && (a.server_built_in || a.server)) { accInfoAsked = true; loadAccInfo(); }
   }
-  async function loadAccInfo() {
+  async function loadAccInfo(server) {
     try {
-      const r = await api('/api/account/info', {});
+      const r = await api('/api/account/info', server ? { server } : {});
       state.account = r.account;
+      setAccMode(accMode);
       if (r.server && r.server.signups_open === false) {
         $('w-acc-note').textContent = 'New accounts are closed right now. You can still sign in.';
         $('w-acc-note').hidden = false;
@@ -354,9 +363,78 @@
       accHelp();
     } catch (e) { /* offline: the form still works */ }
   }
+  // After signing in: an account used before brings its CV, answers and jobs (from your account, or your Drive).
+  async function afterSignIn(restore) {
+    if (restore) {
+      busy($('w-next'), 'Getting your data…');
+      try { await api('/api/sync/now', {}); } catch (e) { /* it syncs again by itself */ }
+    }
+    await refresh();
+    busy($('w-next'));
+    if (state.setup.setup_done && state.setup.has_cv) {
+      go('home');
+      toast(restore && ((state.sync || {}).note || '').includes('from your account')
+        ? 'Welcome back. Your CV, answers and jobs are on this phone.' : 'Signed in.');
+      return;
+    }
+    await loadProfile();
+    const first = wFirst(state.setup);
+    wShow(first === 'welcome' || first === 'account' ? 'cv' : first);
+    kickSuggest(false);
+  }
+  $('w-google').addEventListener('click', async () => {
+    const a = acc();
+    const body = {};
+    if (!a.server_built_in) {
+      body.server = $('w-acc-server').value.trim();
+      if (!body.server) { $('w-acc-err').textContent = 'Type the server address.'; $('w-acc-err').hidden = false; return; }
+    }
+    $('w-acc-err').hidden = true;
+    try {
+      await api('/api/account/google', body);
+      $('w-google-wait').hidden = false;
+    } catch (e) {
+      $('w-acc-err').textContent = e.message;
+      $('w-acc-err').hidden = false;
+    }
+  });
+  // Back in the app while a Google sign-in waits, without the link (the browser did not open the app): the app asks
+  // the server whether Google's page is done. The link, when it comes, is handled first.
+  let googleClaiming = false;
+  function googleResumed() {
+    if (googleClaiming || $('w-google-wait').hidden || acc().signed_in) return;
+    googleClaiming = true;
+    setTimeout(async () => {
+      try {
+        if ($('w-google-wait').hidden || acc().signed_in) return;
+        const r = await api('/api/account/google-claim', {});
+        if (r.pending || $('w-google-wait').hidden) return;
+        window.aaGoogle(JSON.stringify(r));
+      } catch (e) {
+        window.aaGoogle(JSON.stringify({ ok: false, error: e.message }));
+      } finally {
+        googleClaiming = false;
+      }
+    }, 1500);
+  }
+  // Back from Google's page (autoapply://auth): signed in, or why not.
+  window.aaGoogle = async (raw) => {
+    let r = {};
+    try { r = JSON.parse(raw); } catch (e) { r = { ok: false, error: 'Could not sign in. Try again.' }; }
+    $('w-google-wait').hidden = true;
+    if (r.ok === false) {
+      if (view === 'setup' && wStep === 'account') { $('w-acc-err').textContent = r.error; $('w-acc-err').hidden = false; }
+      else toast(r.error, true);
+      return;
+    }
+    if (view !== 'setup' && state && state.setup.setup_done && acc().signed_in) { refresh(); return; }   // done already
+    if (view !== 'setup') await startSetup('account');
+    await afterSignIn(true);
+  };
+
   async function wAccount() {
     const a = acc();
-    if (a.signed_in) { wShow('cv'); kickSuggest(false); return; }
+    if (a.signed_in) { await afterSignIn(!state.setup.has_cv); return; }
     const err = $('w-acc-err');
     err.hidden = true;
     const body = { email: $('w-acc-email').value.trim(), password: $('w-acc-pw').value };
@@ -372,22 +450,8 @@
     try {
       await api(`/api/account/${accMode}`, body);
       $('w-acc-pw').value = '';
-      if (accMode === 'login') {           // an account you used before brings your CV, answers and jobs
-        busy($('w-next'), 'Getting your data…');
-        try { await api('/api/sync/now', {}); } catch (e) { /* it syncs again by itself */ }
-      }
-      await refresh();
       busy($('w-next'));
-      if (state.setup.setup_done && state.setup.has_cv) {
-        go('home');
-        toast(accMode === 'login' && ((state.sync || {}).note || '').includes('from your account')
-          ? 'Welcome back. Your CV, answers and jobs are on this phone.' : 'Signed in.');
-        return;
-      }
-      await loadProfile();
-      const first = wFirst(state.setup);
-      wShow(first === 'welcome' || first === 'account' ? 'cv' : first);
-      kickSuggest(false);
+      await afterSignIn(accMode === 'login');
     } catch (e) {
       busy($('w-next'));
       if (/already exists/i.test(e.message)) setAccMode('login');
@@ -395,6 +459,11 @@
       err.hidden = false;
     }
   }
+  // A server you type (when none is built in): what it offers (Continue with Google, new accounts) shows once it is known.
+  $('w-acc-server').addEventListener('change', () => {
+    const v = $('w-acc-server').value.trim();
+    if (v && !acc().server_built_in) loadAccInfo(v);
+  });
   ['w-acc-email', 'w-acc-pw', 'w-acc-name', 'w-acc-server'].forEach((id) => $(id).addEventListener('keydown', (e) => {
     if (e.key === 'Enter') wNext();
   }));
@@ -929,12 +998,15 @@
     const end = sum.ended || Date.now() / 1000;
     $('brief-time').textContent = `${fmtWhen(sum.started)} to ${sum.ended ? fmtWhen(sum.ended) : 'now'}, ${fmtDur(end - sum.started)}`;
     const questions = sum.questions || [];
+    const readyNow = sum.ready || [];
     const key = JSON.stringify([sum.total, sum.applied.length, sum.stuck.length, sum.errors.length, sum.filled.length,
-      questions.length, sum.ended]);
+      questions.length, sum.ended, readyNow.length]);
     if (key === lastBriefKey) return;
     lastBriefKey = key;
     let html = '';
     html += section('good', 'Sent', sum.applied, (j) => `<li>${jobLink(j)}</li>`);
+    html += section('warn', 'Ready to send: waiting for your yes', readyNow,
+      (j) => `<li>${jobLink(j)}${j.score != null ? ` <span class="tag info">${j.score}/10</span>` : ''}</li>`);
     html += section('good', sum.mode === 'dry' ? 'Good matches' : 'Filled, not sent (test run)', sum.filled,
       (j) => `<li>${jobLink(j)}${j.score != null ? ` <span class="tag info">${j.score}/10</span>` : ''}</li>`);
     html += section('warn', 'Stuck: form not sent', sum.stuck, (j) => `<li>${jobLink(j)}<span class="why">${whyText(j.reason)}</span></li>`);
@@ -948,13 +1020,65 @@
     if ((sum.stuck.length || sum.errors.length) && !live) {
       html += '<div class="brief-sec"><button class="btn wide" id="btn-retry" type="button">Try the jobs with problems again</button></div>';
     }
-    if (!sum.applied.length && !sum.filled.length && !sum.stuck.length && !sum.errors.length && !questions.length) {
+    if (!sum.applied.length && !sum.filled.length && !sum.stuck.length && !sum.errors.length && !questions.length
+      && !readyNow.length) {
       html = `<p class="muted">Nothing sent in this session yet.</p>${html}`;
     }
     box.innerHTML = html;
     const retry = $('btn-retry');
     if (retry) retry.addEventListener('click', () => startBot('apply', { retry: true }));
   }
+  // ------------------------------------------------------------------ ready to send: your yes first
+  let readySig = '';
+  let readyItems = [];
+  async function loadReady() {
+    try {
+      const r = await api('/api/ready');
+      readyItems = r.items || [];
+    } catch (e) { return; }
+    renderReady();
+  }
+  function renderReady() {
+    const waiting = readyItems.filter((j) => j.status === 'ready');
+    $('ready-panel').hidden = !readyItems.length;
+    $('ready-n').hidden = !waiting.length;
+    $('ready-n').textContent = waiting.length;
+    $('ready-apply-all').hidden = waiting.length < 2;
+    $('ready-apply-all').textContent = `Apply all ${waiting.length}`;
+    const later = state && state.running ? 'Sending soon' : 'Sends at the next start';
+    $('ready-list').innerHTML = readyItems.map((j) => `<li data-id="${esc(j.id)}"><a class="job" href="${esc(j.url)}" target="_blank" rel="noopener">${
+      esc(j.title || 'A job')}</a><span class="co">${esc(j.company || '')}${j.score != null ? `${j.company ? ' · ' : ''}match ${esc(j.score)}/10` : ''}</span>${
+      j.status === 'approved' ? `<span class="tag good ready-tag">${later}</span>`
+        : '<div class="ready-btns"><button class="btn" data-ready="skip" type="button">Skip</button>'
+          + '<button class="btn primary" data-ready="approve" type="button">Apply</button></div>'}</li>`).join('');
+  }
+  async function readyAct(op, ids, btn) {
+    if (btn) btn.disabled = true;
+    try {
+      const r = await api('/api/ready', ids ? { op, ids } : { op, all: true });
+      readyItems = r.items || [];
+      renderReady();
+      if (!r.count) toast('Already done.');
+      else if (op === 'skip') toast('Skipped. It will not be sent.');
+      else toast(r.count === 1 ? 'Sending it.' : `Sending ${r.count} applications, one by one.`);
+    } catch (e) {
+      toast(e.message, true);
+      if (btn) btn.disabled = false;
+    }
+    refresh();
+  }
+  $('ready-list').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-ready]');
+    if (b) readyAct(b.dataset.ready, [b.closest('li').dataset.id], b);
+  });
+  $('ready-apply-all').addEventListener('click', (e) => readyAct('approve', null, e.currentTarget));
+  window.aaShowReady = () => {
+    go('home');
+    loadReady().then(() => {
+      if (!$('ready-panel').hidden) $('ready-panel').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  };
+
   let lastRecentSig = '';
   function renderRecent(list) {
     const sig = JSON.stringify(list.map((j) => j.id));
@@ -1160,7 +1284,8 @@
       $('q-job').href = job.url || '#';
       $('q-job').innerHTML = `For <b>${esc(job.title)}</b>${job.company ? ` at ${esc(job.company)}` : ''}`;
       $('q-text').textContent = q.question;
-      $('q-kind').textContent = [KIND_HELP[q.kind] || '', q.maxlen ? `Up to ${q.maxlen} characters.` : ''].join(' ').trim();
+      $('q-kind').textContent = [q.note || '', KIND_HELP[q.kind] || '', q.maxlen ? `Up to ${q.maxlen} characters.` : '']
+        .join(' ').trim();
       const rej = (q.rejected || []).map((r) => `“${r}”`).join(', ');
       $('q-rejected').hidden = !q.hint;
       $('q-rejected').textContent = q.hint ? `LinkedIn did not accept ${rej || 'the answer'}: ${q.hint}` : '';
@@ -1285,7 +1410,10 @@
         box.querySelectorAll('input').forEach((i) => { i.checked = vals.includes(i.value); });
       });
       $('s-AUTO_UPDATE').checked = String(d.AUTO_UPDATE) !== '0';
-      const newq = String(d.NEW_QUESTIONS || '').toLowerCase() === 'ai' ? 'ai' : 'ask';
+      $('s-APPROVE_FIRST').checked = String(d.APPROVE_FIRST) !== '0';
+      const nq = String(d.NEW_QUESTIONS || '').trim().toLowerCase();
+      const newq = ['unsure', 'sure', 'mixed'].includes(nq) ? 'unsure'
+        : ['ai', 'auto', 'off', 'no', 'false', '0'].includes(nq) ? 'ai' : 'ask';
       document.querySelectorAll('input[name=newq]').forEach((r) => { r.checked = r.value === newq; });
       if (!$('s-DATE_POSTED').value) $('s-DATE_POSTED').value = 'week';
       $('min-score-val').textContent = `${$('s-MIN_SCORE').value}/10`;
@@ -1335,7 +1463,12 @@
     const a = acc();
     $('acc-state').textContent = !a.signed_in ? 'Signed out' : a.pro ? 'Active' : 'Not active yet';
     $('acc-state').className = `tag ${!a.signed_in ? '' : a.pro ? 'good' : 'warn'}`;
-    $('acc-who').innerHTML = a.signed_in ? `${esc(a.name || a.email)}${a.name ? `<small>${esc(a.email)}</small>` : ''}` : 'Not signed in';
+    $('acc-who').innerHTML = a.signed_in ? `${esc(a.name || a.email)}<small>${esc(a.name ? a.email : '')}${a.google
+      ? `${a.name ? ' · ' : ''}Signed in with Google` : ''}</small>` : 'Not signed in';
+    const byEmail = !a.has_password;
+    $('acc-del-pw-label').textContent = byEmail ? 'Type your email to confirm' : 'Your password';
+    $('acc-del-pw').type = byEmail ? 'email' : 'password';
+    $('acc-del-pw').autocomplete = byEmail ? 'off' : 'current-password';
     $('acc-pro').textContent = !auto() ? (!a.signed_in ? 'Sign in to use the AI that fills forms and writes cover letters.'
       : a.pro ? 'AI help is active: forms, new questions and cover letters.'
         : 'AI help isn’t active on your account yet. Your jobs, your answers and Fill work without it.')
@@ -1376,10 +1509,11 @@
   });
   $('btn-acc-del').addEventListener('click', async () => {
     const pw = $('acc-del-pw').value;
-    if (!pw) { toast('Type your password first.', true); return; }
+    const byEmail = !acc().has_password;
+    if (!pw) { toast(byEmail ? 'Type your email first.' : 'Type your password first.', true); return; }
     $('btn-acc-del').disabled = true;
     try {
-      await api('/api/account/delete', { password: pw });
+      await api('/api/account/delete', byEmail ? { confirm: pw.trim() } : { password: pw });
       $('acc-del-pw').value = '';
       $('acc-del-box').open = false;
       toast('Your account was deleted.');
@@ -1547,6 +1681,14 @@
     btn.textContent = running ? 'Stop the app to update' : busyNow ? 'Updating…' : st === 'ready' ? 'Install now' : 'Download and install';
     $('btn-update-check').disabled = !!u.checking || busyNow;
   }
+  $('s-APPROVE_FIRST').addEventListener('change', async () => {
+    const on = $('s-APPROVE_FIRST').checked;
+    try {
+      await api('/api/settings', { APPROVE_FIRST: on ? '1' : '0' });
+      delete $('s-APPROVE_FIRST').dataset.dirty;
+      toast(on ? 'Each application waits for your yes.' : 'Applications are sent by themselves.');
+    } catch (e) { toast(e.message, true); }
+  });
   $('s-AUTO_UPDATE').addEventListener('change', async () => {
     const on = $('s-AUTO_UPDATE').checked;
     try {
@@ -2178,6 +2320,7 @@
   // Back from the LinkedIn app, or from a company's site in the app's browser.
   window.aaResumed = () => {
     driveResumed();
+    googleResumed();
     if (awaiting && Date.now() - awaiting.at > 3000) {
       const id = awaiting.id;
       awaiting = null;

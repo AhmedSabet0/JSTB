@@ -20,8 +20,13 @@ public final class Questions {
     public static volatile String askMode = "ask";
     public static volatile int askTimeoutMin = 10;
 
+    /** "ask": you answer each new question; "ai": the AI answers them; "unsure": the AI answers the ones it is sure
+     *  about and asks you the rest. */
     public static String askModeOf(String value) {
         String v = value == null ? "" : value.trim().toLowerCase(Locale.ROOT);
+        if (v.equals("unsure") || v.equals("sure") || v.equals("mixed")) {
+            return "unsure";
+        }
         return v.equals("ai") || v.equals("auto") || v.equals("off") || v.equals("no") || v.equals("false") || v.equals("0")
                 ? "ai" : "ask";
     }

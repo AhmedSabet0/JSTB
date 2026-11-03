@@ -152,6 +152,11 @@ public final class AndroidPlatform implements Platform {
     }
 
     @Override
+    public void onReady(List<Map<String, Object>> ready) {
+        Notifs.ready(app, ready);
+    }
+
+    @Override
     public void onSessionEnd(Map<String, Object> summary, List<String> lines) {
         Notifs.cancel(app, Notifs.ID_SIGNIN);
         Notifs.brief(app, summary, lines);

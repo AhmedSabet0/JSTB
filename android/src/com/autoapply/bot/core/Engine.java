@@ -152,6 +152,47 @@ public final class Engine {
 
     public static final String NOT_ACTIVE = "Auto apply isn't active on your account yet. You can start once it is.";
 
+    // ------------------------------------------------------------------ ready to send: your yes first
+    /** Applications filled up to Submit that wait for your yes, and the ones you said yes to. */
+    public List<Map<String, Object>> ready() {
+        return store.ready();
+    }
+
+    /** You said yes (Apply, or Apply all with ids null): the bot sends them; when it is not running, a short run starts
+     *  that only sends them. Returns how many. */
+    public synchronized int approve(List<String> ids) {
+        int n = store.changeStatus(ids == null ? store.idsWithStatus("ready") : ids, "ready", "approved");
+        if (n > 0) {
+            log("You said yes to " + n + (n == 1 ? " application." : " applications."));
+        }
+        readyChanged();
+        if (n > 0 && !running()) {
+            Bot.Options o = new Bot.Options();
+            o.sendOnly = true;
+            String err = start(o);
+            if (!err.isEmpty()) {
+                log("Could not send them now: " + err);
+            }
+        }
+        return n;
+    }
+
+    /** You said no (Skip): not sent. ids null = every ready one. */
+    public int skipReady(List<String> ids) {
+        int n = store.changeStatus(ids == null ? store.idsWithStatus("ready") : ids, "ready", "user_skipped");
+        readyChanged();
+        return n;
+    }
+
+    /** The notification follows the applications that wait for you. */
+    void readyChanged() {
+        try {
+            platform.onReady(store.ready());
+        } catch (RuntimeException e) {
+            log("Could not show the notification: " + Util.shortError(e, 80));
+        }
+    }
+
     /** Signed in, and Pro is on. Returns the problem, or null. */
     String checkAccount() {
         if (!account.signedIn()) {

@@ -157,6 +157,9 @@ public final class Account {
     public synchronized Map<String, Object> info() {
         Map<String, Object> u = Json.map(data.get("user"));
         return Json.obj("signed_in", signedIn(), "email", Json.str(data, "email"), "name", Json.str(u, "name"),
+                "google", Json.bool(u, "google"), "has_password", !u.containsKey("has_password") || Json.bool(u, "has_password"),
+                "google_signin", Json.bool(data, "google_signin"),
+                "password_signups", !data.containsKey("password_signups") || Json.bool(data, "password_signups"),
                 "pro", Json.bool(u, "pro"), "max_per_day", Json.num(u, "max_per_day", 0),
                 "max_per_hour", Json.num(u, "max_per_hour", 0), "announcement", Json.str(u, "announcement"),
                 "update", Json.map(u.get("update")), "server", server(),
@@ -228,14 +231,105 @@ public final class Account {
         synchronized (this) {
             data.put("contact", Json.str(r, "contact_email"));
             data.put("signups_open", Json.bool(r, "signups_open"));
+            data.put("google_signin", Json.bool(r, "google_signin"));
+            data.put("password_signups", !r.containsKey("password_signups") || Json.bool(r, "password_signups"));
             save();
         }
         return r;
     }
 
-    public void delete(String password) {
-        call("POST", "/v1/me/delete", Json.obj("password", password), true);
+    /** Deletes the account: its password, or for an account made with Google its email typed to confirm. */
+    public void delete(String password, String confirm) {
+        call("POST", "/v1/me/delete", Json.obj("password", password, "confirm", confirm), true);
         forget(true);
+    }
+
+    // ------------------------------------------------------------------ Sign in with Google
+    /** Step 1: Google's page, to open in the browser. A PKCE verifier stays on this phone (in account.json, so it
+     *  survives the trip to the browser): the code Google's page leads back with is worth nothing without it. */
+    public String googleStart() {
+        byte[] raw = new byte[48];
+        new java.security.SecureRandom().nextBytes(raw);
+        String verifier = b64url(raw);
+        String challenge;
+        try {
+            challenge = b64url(java.security.MessageDigest.getInstance("SHA-256").digest(verifier.getBytes(Util.UTF8)));
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new IllegalStateException(e);
+        }
+        synchronized (this) {
+            data.put("google_verifier", verifier);
+            save();
+        }
+        Map<String, Object> r = call("POST", "/v1/auth/google/start", Json.obj("challenge", challenge, "device", device), false);
+        return Json.str(r, "url");
+    }
+
+    /** One Google sign-in finishes at a time (the link and the app coming back can arrive together). */
+    private final Object googleLock = new Object();
+
+    /** Step 2: back from Google's page (autoapply://auth?code=...): the code and the verifier make a session. */
+    public Map<String, Object> googleFinish(String code) {
+        synchronized (googleLock) {
+            String verifier;
+            synchronized (this) {
+                verifier = Json.str(data, "google_verifier");
+            }
+            if (verifier.isEmpty()) {
+                if (signedIn()) {
+                    return info();      // finished already, when the app came back
+                }
+                throw new ServerError(400, "Tap Continue with Google again.", "bad_code");
+            }
+            Map<String, Object> r;
+            try {
+                r = call("POST", "/v1/auth/google/finish", Json.obj("code", code, "verifier", verifier, "device", device), false);
+            } finally {
+                synchronized (this) {
+                    data.remove("google_verifier");
+                    save();
+                }
+            }
+            signedInAs(r, Json.str(Json.map(r.get("user")), "email"));
+            return info();
+        }
+    }
+
+    /** Back in the app without the link (the browser did not open the app): the verifier alone finishes the sign-in it
+     *  started. Null while Google's page is not done, or when no sign-in waits. */
+    public Map<String, Object> googleClaim() {
+        synchronized (googleLock) {
+            String verifier;
+            synchronized (this) {
+                verifier = Json.str(data, "google_verifier");
+            }
+            if (verifier.isEmpty() || signedIn()) {
+                return null;
+            }
+            Map<String, Object> r;
+            try {
+                r = call("POST", "/v1/auth/google/claim", Json.obj("verifier", verifier, "device", device), false);
+            } catch (ServerError e) {
+                synchronized (this) {   // too old: start again
+                    data.remove("google_verifier");
+                    save();
+                }
+                throw e;
+            }
+            if (Json.bool(r, "pending")) {
+                return null;
+            }
+            synchronized (this) {
+                data.remove("google_verifier");
+                save();
+            }
+            signedInAs(r, Json.str(Json.map(r.get("user")), "email"));
+            return info();
+        }
+    }
+
+    static String b64url(byte[] raw) {
+        return Util.base64(raw).replace('+', '-').replace('/', '_').replaceAll("=+$", "");
     }
 
     public Map<String, Object> report(Map<String, Object> body) {

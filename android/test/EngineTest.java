@@ -105,6 +105,20 @@ public class EngineTest {
             events.add("session-end");
         }
 
+        volatile List<Map<String, Object>> ready = new ArrayList<>();
+
+        @Override
+        public void onReady(List<Map<String, Object>> items) {
+            ready = items;
+            int waiting = 0;
+            for (Map<String, Object> j : items) {
+                if ("ready".equals(Json.str(j, "status"))) {
+                    waiting++;
+                }
+            }
+            events.add("ready:" + waiting);
+        }
+
         @Override
         public void openSignIn() {
             events.add("open-signin");
@@ -194,7 +208,8 @@ public class EngineTest {
 
     static Map<String, Object> config(Object... extra) {
         Map<String, Object> cfg = Json.obj("KEYWORDS", "DevOps Engineer", "LOCATION", "Egypt",
-                "PAGES_PER_KEYWORD", "1", "NEW_QUESTIONS", "ai", "ASK_TIMEOUT_MIN", "0", "CV_FILE", "cv.pdf", "CV_NAME", "cv.pdf");
+                "PAGES_PER_KEYWORD", "1", "NEW_QUESTIONS", "ai", "ASK_TIMEOUT_MIN", "0", "CV_FILE", "cv.pdf", "CV_NAME", "cv.pdf",
+                "APPROVE_FIRST", "0");   // these scenarios send by themselves; approve() tests asking first
         for (int k = 0; k + 1 < extra.length; k += 2) {
             cfg.put(String.valueOf(extra[k]), extra[k + 1]);
         }
@@ -1058,7 +1073,7 @@ public class EngineTest {
         check("phone A fills the account (CV, answers, info, jobs)", Json.bool(r, "ok") && Json.map(d.get("cv")) != null
                 && "Sara CV.pdf".equals(Json.str(Json.map(d.get("cv")), "name")) && Json.num(n, "facts", 0) == 1
                 && Json.num(n, "copilot", 0) == 1 && Json.num(n, "jobs", 0) == 1 && Json.num(n, "profile", 0) >= 14
-                && Json.num(n, "settings", 0) == 17, Json.stringify(r) + " " + Json.stringify(d));
+                && Json.num(n, "settings", 0) == 18, Json.stringify(r) + " " + Json.stringify(d));
         check("nothing waits after the sync", Json.num(Json.map(r.get("sync")), "waiting", -1) == 0, r.get("sync"));
         String auto = Util.readText(new File(a, "config.json"));
         check("this phone's update settings stay on it", !Json.stringify(d).contains("AUTO_UPDATE"), auto);
@@ -1170,6 +1185,184 @@ public class EngineTest {
         } finally {
             com.autoapply.bot.core.Sync.auto = false;
         }
+    }
+
+    // ------------------------------------------------------------------ ask before sending (GitHub build)
+    static void approve() throws Exception {
+        System.out.println("\n== Ask before sending: filled up to Submit, then Apply / Skip / Apply all");
+        File d = fresh("approve");
+        write(d, "config.json", Json.pretty(config("APPROVE_FIRST", "1")));
+        write(d, "about_me.txt", "Phone: 01012345678\n");
+        TestPlatform p = new TestPlatform("classic");
+        Engine e = new Engine(p, d);
+        e.run(opts(false));
+        Map<String, String> st = statuses(d);
+        List<String> con = p.console();
+        String lg = log(d);
+        check("good matches are filled up to Submit and wait for you; nothing is sent",
+                st.toString().equals("{111=ready, 222=ready, 444=stuck, 555=no_easy_apply, 666=skipped_low_score}")
+                        && !con.contains("AA_FOLLOW_AT_SUBMIT=false") && count(con, "AA_DISCARDED") >= 3, st);
+        check("their answers are kept for sending later", "01012345678".equals(qa(jobs(d).get("111")).get("Mobile phone number")));
+        check("no pacing waits while preparing (the pace is for sending)", count(lg, "Next application slot at") == 0);
+        check("the notification follows them: one, then two", p.events.contains("ready:1") && p.events.contains("ready:2")
+                && p.ready.size() == 2, p.events);
+        check("the brief says they wait for your yes", lg.contains("Ready to send, waiting for your yes: 2")
+                && Json.arr(p.lastSummary.get("ready")).size() == 2);
+        Api a = new Api(e);
+        Map<String, Object> r = api(a, "/api/ready", null);
+        check("the app lists them", Json.arr(r.get("items")).size() == 2 && Json.num(api(a, "/api/state", null), "ready", 0) == 2, r);
+        r = api(a, "/api/ready", Json.obj("op", "skip", "ids", Json.list("222")));
+        check("Skip: not sent", Json.bool(r, "ok") && "user_skipped".equals(statuses(d).get("222")) && p.events.contains("ready:1"));
+        int before = p.console().size();
+        r = api(a, "/api/ready", Json.obj("op", "approve", "ids", Json.list("111")));
+        check("Apply while the bot is not running: a short run starts to send it", Json.bool(r, "ok") && Json.num(r, "count", 0) == 1
+                && Json.bool(r, "running"), r);
+        e.join(120000);
+        String lg2 = log(d).substring(lg.length());
+        List<String> con2 = p.console().subList(before, p.console().size());
+        check("sent: applied, and only that one", "applied".equals(statuses(d).get("111")) && "user_skipped".equals(statuses(d).get("222"))
+                && count(con2, "AA_FOLLOW_AT_SUBMIT=false") == 1, statuses(d));
+        check("no new search and no second AI score for it", !lg2.contains("Searching") && !lg2.contains("Match ")
+                && lg2.contains("Sending what you said yes to"), lg2);
+        check("nothing left in the notification", p.events.get(p.events.size() - 1).startsWith("ready:0") || p.ready.isEmpty(), p.events);
+
+        // Apply all while it runs: it keeps preparing, then sends what you said yes to.
+        File d2 = fresh("approve_all");
+        write(d2, "config.json", Json.pretty(config("APPROVE_FIRST", "1")));
+        write(d2, "about_me.txt", "Phone: 01012345678\n");
+        TestPlatform p2 = new TestPlatform("classic");
+        Engine e2 = new Engine(p2, d2);
+        com.autoapply.bot.core.Bot.Options keep = opts(false);
+        keep.once = false;
+        check("started", e2.start(keep).isEmpty());
+        boolean both = waitFor(() -> "ready".equals(statuses(d2).get("111")) && "ready".equals(statuses(d2).get("222"))
+                && statuses(d2).containsKey("666"), 120);
+        check("while running: both prepared, the round goes on", both && e2.running(), statuses(d2));
+        Api a2 = new Api(e2);
+        r = api(a2, "/api/ready", Json.obj("op", "approve", "all", true));
+        check("Apply all", Json.num(r, "count", 0) == 2, r);
+        boolean sent = waitFor(() -> "applied".equals(statuses(d2).get("111")) && "applied".equals(statuses(d2).get("222")), 120);
+        check("the running bot sends them, at your pace", sent && count(log(d2), "You said yes to this application") == 2, statuses(d2));
+        e2.stop();
+        e2.join(60000);
+        check("stopped", !e2.running());
+
+        // As many waiting as an hour's pace: it prepares no more until you answer some.
+        File d3 = fresh("approve_cap");
+        write(d3, "config.json", Json.pretty(config("APPROVE_FIRST", "1", "PER_HOUR", "1")));
+        write(d3, "about_me.txt", "Phone: 01012345678\n");
+        com.autoapply.bot.core.Bot.readyMin = 1;
+        try {
+            TestPlatform p3 = new TestPlatform("classic");
+            Engine e3 = new Engine(p3, d3);
+            e3.run(opts(false));
+            check("a one-round run stops preparing at the cap (1 an hour here)", statuses(d3).toString().equals("{111=ready}")
+                    && log(d3).contains("No more are prepared in this run."), statuses(d3));
+            com.autoapply.bot.core.Bot.Options keep3 = opts(false);
+            keep3.once = false;
+            check("started again", e3.start(keep3).isEmpty());
+            boolean waits = waitFor(() -> log(d3).contains("Preparing more after you answer some."), 60);
+            Api a3 = new Api(e3);
+            check("a run that keeps going waits for you", waits && Json.str(Json.map(api(a3, "/api/state", null).get("status")), "message")
+                    .startsWith("Waiting for your yes"), api(a3, "/api/state", null).get("status"));
+            api(a3, "/api/ready", Json.obj("op", "skip", "ids", Json.list("111")));
+            boolean next = waitFor(() -> "ready".equals(statuses(d3).get("222")), 90);
+            check("you answered: it goes on with the next one", next && "user_skipped".equals(statuses(d3).get("111")), statuses(d3));
+            e3.stop();
+            e3.join(60000);
+            check("stopped", !e3.running());
+        } finally {
+            com.autoapply.bot.core.Bot.readyMin = 3;
+        }
+    }
+
+    // ------------------------------------------------------------------ the AI answers when it is sure, else asks you
+    static void unsure() throws Exception {
+        System.out.println("\n== The AI answers what it is sure about, and asks you the rest");
+        check("the default for new installs; the modes", "unsure".equals(com.autoapply.bot.core.Config.dflt("NEW_QUESTIONS"))
+                && "unsure".equals(com.autoapply.bot.core.Questions.askModeOf("unsure"))
+                && "ask".equals(com.autoapply.bot.core.Questions.askModeOf("ask"))
+                && "ai".equals(com.autoapply.bot.core.Questions.askModeOf("ai")));
+        File d = fresh("unsure");
+        write(d, "config.json", Json.pretty(config("NEW_QUESTIONS", "unsure")));
+        write(d, "about_me.txt", "Phone: 01012345678\n");
+        TestPlatform p = new TestPlatform("classic");
+        Engine e = new Engine(p, d);
+        Api a = new Api(e);
+        check("the mode shows", "unsure".equals(Json.str(api(a, "/api/state", null), "ask_mode")));
+        check("start", Json.bool(api(a, "/api/start", Json.obj("mode", "apply", "once", true)), "ok"));
+        List<String> asked = new ArrayList<>();
+        Map<String, Map<String, Object>> cards = new java.util.LinkedHashMap<>();
+        java.util.Set<String> done = new java.util.HashSet<>();
+        long end = System.currentTimeMillis() + 150000;
+        Util.realSleep(0.3);
+        while (e.running() && System.currentTimeMillis() < end) {
+            Map<String, Object> q = Json.map(api(a, "/api/state", null).get("question"));
+            if (q.isEmpty() || Json.bool(q, "loading") || done.contains(Json.str(q, "id"))) {
+                Util.realSleep(0.05);
+                continue;
+            }
+            done.add(Json.str(q, "id"));
+            String text = Json.str(q, "question");
+            asked.add(text);
+            cards.put(text, q);
+            if (text.contains("Terraform") || text.contains("hybrid")) {
+                answer(a, q, text.contains("Terraform") ? "3" : "Yes", true);
+            } else {
+                api(a, "/api/skip-question", Json.obj("id", Json.str(q, "id")));   // job 3's odd ID format: skip that job
+            }
+        }
+        waitIdle(e, 60);
+        if (e.running()) {
+            e.stop();
+            e.join(30000);
+        }
+        Map<String, String> st = statuses(d);
+        String lg = log(d);
+        Map<String, String> qa1 = qa(jobs(d).get("111"));
+        check("applied as usual", st.toString().equals("{111=applied, 222=applied, 444=user_skipped, 555=no_easy_apply, "
+                + "666=skipped_low_score}"), st);
+        check("you were asked only what the AI was not sure about, once (job 2 used your answers)",
+                count(String.join("\n", asked), "Terraform") == 1 && count(String.join("\n", asked), "hybrid") == 1
+                        && asked.size() == 3 && asked.stream().noneMatch(x -> x.matches("(?i).*(phone|city|english|cloud).*")), asked);
+        check("what the CV or the notes say, the AI filled by itself", lg.contains("AI answer (sure 95%): Mobile phone number -> 01012345678")
+                && lg.contains("AI answer (sure 90%): Location (city)") && lg.contains("AI answer (sure 85%)")
+                && lg.contains("AI answer (sure 90%): Which cloud platforms"), lg);
+        Map<String, Object> tf = null;
+        for (Map.Entry<String, Map<String, Object>> c : cards.entrySet()) {
+            if (c.getKey().contains("Terraform")) {
+                tf = c.getValue();
+            }
+        }
+        check("the card says why you are asked, with the AI's guess among the suggestions", tf != null
+                && Json.str(tf, "note").contains("not sure") && Json.arr(tf.get("suggestions")).contains("0"), tf);
+        check("the form has both: yours and the AI's", "3".equals(qa1.get("How many years of work experience do you have with Terraform?"))
+                && "Yes".equals(qa1.get("Are you comfortable working in a hybrid setting?"))
+                && "01012345678".equals(qa1.get("Mobile phone number")) && "AWS, Azure".equals(qa1.get("Which cloud platforms have you used in production?")),
+                qa1);
+        check("your answers are saved for next time", "3".equals(answers(d).get("how many years of work experience do you have with terraform?")));
+        check("the log says when it asks", lg.contains("The AI is not sure (40%: a guess), so it asks you."));
+
+        // You switch to "Let the AI answer" while it asks: its guess goes in, LinkedIn's check fixes it as usual.
+        File d2 = fresh("unsure2");
+        write(d2, "config.json", Json.pretty(config("NEW_QUESTIONS", "unsure")));
+        write(d2, "about_me.txt", "Phone: 01012345678\n");
+        TestPlatform p2 = new TestPlatform("classic");
+        Engine e2 = new Engine(p2, d2);
+        Api a2 = new Api(e2);
+        check("start", Json.bool(api(a2, "/api/start", Json.obj("mode", "apply", "once", true)), "ok"));
+        Map<String, Object> q = waitQuestion(a2, "Terraform", false, 60);
+        check("asked", q != null);
+        api(a2, "/api/ask-mode", Json.obj("mode", "ai"));
+        waitIdle(e2, 120);
+        String lg2 = log(d2);
+        check("the AI's guess went in, then the usual fix", lg2.contains("New questions are answered by the AI now.")
+                && lg2.contains("AI answer: How many years of work experience do you have with Terraform? -> 0")
+                && "3".equals(qa(jobs(d2).get("111")).get("How many years of work experience do you have with Terraform?")),
+                qa(jobs(d2).get("111")));
+        check("applied", "applied".equals(statuses(d2).get("111")) && "applied".equals(statuses(d2).get("222")), statuses(d2));
+        api(a2, "/api/ask-mode", Json.obj("mode", "unsure"));
+        check("the switch is saved", "unsure".equals(e2.config.load().get("NEW_QUESTIONS")));
     }
     // ------------------------------------------------------------------ main
     // ------------------------------------------------------------------ jobs you apply to yourself (Google Play build)
@@ -1327,6 +1520,12 @@ public class EngineTest {
             }
             if (which.equals("all") || which.equals("sync")) {
                 sync();
+            }
+            if (which.equals("all") || which.equals("approve")) {
+                approve();
+            }
+            if (which.equals("all") || which.equals("unsure")) {
+                unsure();
             }
         } finally {
             CdpPage.stopChrome();

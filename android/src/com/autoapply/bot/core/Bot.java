@@ -27,9 +27,12 @@ public final class Bot implements LinkedIn.Resolver, LinkedIn.Hooks {
         public boolean noSubmit;
         public boolean once;
         public boolean retryFailed;
+        /** Only send the applications you said yes to (Apply in the notification while the bot was not running). */
+        public boolean sendOnly;
 
         public Map<String, Object> toMap() {
-            return Json.obj("dry_run", dryRun, "no_submit", noSubmit, "once", once, "retry_failed", retryFailed);
+            return Json.obj("dry_run", dryRun, "no_submit", noSubmit, "once", once, "retry_failed", retryFailed,
+                    "send_only", sendOnly);
         }
     }
 
@@ -218,15 +221,59 @@ public final class Bot implements LinkedIn.Resolver, LinkedIn.Hooks {
         }
     }
 
+    /** Ask before sending: each form is filled up to Submit, then waits for your yes (Apply) while the bot goes on.
+     *  Read for each job, so flipping it in Settings counts right away. */
+    boolean approveFirst() {
+        return !args.dryRun && !noSubmit && !"0".equals(engine.config.load().get("APPROVE_FIRST"));
+    }
+
     boolean seen(String jobId) {
         return store.seen(jobId, retryStatuses);
     }
 
+    /** The fewest forms that may wait for your yes before the bot waits for you (else an hour's worth, at your pace). */
+    public static int readyMin = 3;
+
+    int readyCap() {
+        return Math.max(readyMin, hourCap());
+    }
+
+    /** Before the next job: when as many forms wait for your yes as your pace sends in an hour, the bot waits for you
+     *  (and sends what you say yes to meanwhile). False in a one-round run, which ends its round there. */
+    boolean roomToPrepare() {
+        if (!approveFirst() || store.idsWithStatus("ready").size() < readyCap()) {
+            return true;
+        }
+        if (args.once) {
+            log(waitingLine() + " No more are prepared in this run.");
+            return false;
+        }
+        log(waitingLine() + " Preparing more after you answer some.");
+        while (approveFirst() && store.idsWithStatus("ready").size() >= readyCap()) {
+            int n = store.idsWithStatus("ready").size();
+            Util.setStatus("state", "waiting", "message", "Waiting for your yes: " + n + (n == 1 ? " application is" : " applications are")
+                    + " ready to send", "job", null, "next_slot_at", 0);
+            sleep(10);
+            sendApproved();
+        }
+        return true;
+    }
+
+    String waitingLine() {
+        int n = store.idsWithStatus("ready").size();
+        return n + (n == 1 ? " application waits" : " applications wait") + " for your yes.";
+    }
+
     // ------------------------------------------------------------------ loop
     public void run() {
+        if (args.sendOnly) {
+            sendApproved();
+            return;
+        }
         while (true) {
             roundApplied = 0;
             cycle();
+            sendApproved();
             if (args.once) {
                 return;
             }
@@ -235,13 +282,37 @@ public final class Bot implements LinkedIn.Resolver, LinkedIn.Hooks {
             log("Round finished (" + roundApplied + " applied). Searching again at " + Util.fmtWhen(at) + ".");
             Util.setStatus("state", "waiting", "message", "Round finished. Searching again at " + Util.fmtWhen(at), "job", null,
                     "next_slot_at", at);
-            sleep(wait);
+            double left = wait;
+            while (left > 0) {                // a yes you give meanwhile is sent right away
+                double chunk = Math.min(10, left);
+                sleep(chunk);
+                left -= chunk;
+                if (!store.idsWithStatus("approved").isEmpty()) {
+                    sendApproved();
+                    Util.setStatus("state", "waiting", "message", "Round finished. Searching again at " + Util.fmtWhen(at),
+                            "job", null, "next_slot_at", at);
+                }
+            }
             Util.setStatus("next_slot_at", 0);
+        }
+    }
+
+    /** The applications you said yes to (in the notification or on Home): sent now, at your pace. */
+    void sendApproved() {
+        if (args.dryRun || noSubmit) {
+            return;
+        }
+        for (String jobId : store.idsWithStatus("approved")) {
+            log("You said yes to this application. Sending it: " + String.format(LinkedIn.JOB_URL, jobId));
+            handle(jobId);
+            engine.readyChanged();
+            pause(3, 6);
         }
     }
 
     void cycle() {
         retryAnswered();
+        sendApproved();
         for (String keyword : keywords) {
             for (int pageNo = 0; pageNo < pages; pageNo++) {
                 String where = location.isEmpty() ? "" : " in " + location;
@@ -263,9 +334,13 @@ public final class Bot implements LinkedIn.Resolver, LinkedIn.Hooks {
                     if (seen(jobId)) {
                         continue;
                     }
+                    if (!roomToPrepare()) {
+                        return;                 // the rest are looked at in the next run
+                    }
                     handle(jobId);
                     pause(5, 12);
                     retryAnswered();
+                    sendApproved();
                 }
                 pause(4, 9);
             }
@@ -370,23 +445,35 @@ public final class Bot implements LinkedIn.Resolver, LinkedIn.Hooks {
             return;
         }
 
-        pause(2, 5);  // read the post like a person would
-        Util.setStatus("message", "AI is checking how well the job matches your CV");
-        Object[] sc = ai.score(title, company, Json.str(info, "description"));
-        int score = (Integer) sc[0];
-        String reason = (String) sc[1];
-        job.put("score", score);
-        log("  Match " + score + "/10: " + reason);
-        if (score < minScore) {
-            record(jobId, "skipped_low_score", score, reason, null, false);
-            return;
-        }
-        if (args.dryRun) {
-            record(jobId, "dry_run_match", score, reason, null, false);
-            return;
+        Map<String, Object> was = store.job(jobId);
+        boolean approved = was != null && "approved".equals(Json.str(was, "status"));
+        int score;
+        String reason;
+        if (approved) {                 // you said yes to it: no second scoring
+            score = (int) Json.num(was, "score", minScore);
+            reason = Json.str(was, "reason");
+            job.put("score", score);
+            log("  Sending what you said yes to (match " + score + "/10)");
+        } else {
+            pause(2, 5);  // read the post like a person would
+            Util.setStatus("message", "AI is checking how well the job matches your CV");
+            Object[] sc = ai.score(title, company, Json.str(info, "description"));
+            score = (Integer) sc[0];
+            reason = (String) sc[1];
+            job.put("score", score);
+            log("  Match " + score + "/10: " + reason);
+            if (score < minScore) {
+                record(jobId, "skipped_low_score", score, reason, null, false);
+                return;
+            }
+            if (args.dryRun) {
+                record(jobId, "dry_run_match", score, reason, null, false);
+                return;
+            }
         }
 
-        if (!noSubmit && waitForSlot()) {
+        boolean prepare = !approved && approveFirst();   // fill it up to Submit, then ask you
+        if (!noSubmit && !prepare && waitForSlot()) {
             Map<String, Object> again = li.openJob(jobId);
             if (!"easy".equals(again.get("state"))) {
                 record(jobId, again.get("state") == null ? "no_easy_apply" : Json.str(again, "state"), score, reason, null, false);
@@ -394,10 +481,10 @@ public final class Bot implements LinkedIn.Resolver, LinkedIn.Hooks {
             }
         }
 
-        Util.setStatus("state", "working", "message", "Filling the application (match " + score + "/10)");
+        Util.setStatus("state", "working", "message", (prepare ? "Preparing" : "Filling") + " the application (match " + score + "/10)");
         LinkedIn.Outcome out;
         try {
-            out = li.apply(jobId, this, noSubmit);
+            out = li.apply(jobId, this, noSubmit || prepare);
             for (int k = 0; k < 2 && "daily_limit".equals(out.status); k++) {
                 double at = tomorrowMorning(Util.now());
                 log("  LinkedIn says the daily Easy Apply limit is reached. Waiting until " + Util.fmtWhen(at) + ".");
@@ -409,7 +496,7 @@ public final class Bot implements LinkedIn.Resolver, LinkedIn.Hooks {
                     record(jobId, again.get("state") == null ? "no_easy_apply" : Json.str(again, "state"), score, reason, null, false);
                     return;
                 }
-                out = li.apply(jobId, this, noSubmit);
+                out = li.apply(jobId, this, noSubmit || prepare);
             }
         } catch (Questions.NeedsAnswer e) {
             li.discard();  // nothing is sent; the job is tried again after you answer
@@ -424,6 +511,10 @@ public final class Bot implements LinkedIn.Resolver, LinkedIn.Hooks {
         }
         String status = out.status;
         String note = out.note;
+        if (prepare && "dry_run_match".equals(status)) {
+            status = "ready";
+            note = "";
+        }
         if ("daily_limit".equals(status)) {
             status = "error";
             note = "LinkedIn daily limit";
@@ -434,6 +525,9 @@ public final class Bot implements LinkedIn.Resolver, LinkedIn.Hooks {
             roundApplied++;
             int[] counts = appliedCounts(store.stateCopy(), Util.now());
             log("  APPLIED  (" + counts[1] + " today, " + counts[0] + " in the last hour)");
+        } else if ("ready".equals(status)) {
+            log("  READY: filled up to Submit (" + out.qa.size() + " answers). It waits for your yes: Apply in the "
+                    + "notification or on Home. Going on with the next jobs.");
         } else if ("dry_run_match".equals(status)) {
             log("  Form filled; stopped before Submit (test run). " + out.qa.size() + " answers given.");
         } else if ("stuck".equals(status)) {
@@ -450,6 +544,9 @@ public final class Bot implements LinkedIn.Resolver, LinkedIn.Hooks {
             full = full.isEmpty() ? note : full + " | " + note;
         }
         record(jobId, status, score, full, out.qa, true);
+        if ("ready".equals(status)) {
+            engine.readyChanged();      // the notification with Apply
+        }
     }
 
     /** Your daily limit, or the admin's cap when that is lower. */
@@ -517,10 +614,22 @@ public final class Bot implements LinkedIn.Resolver, LinkedIn.Hooks {
     /** Filling a form you have open yourself (a company's site): never wait for a question card. */
     public boolean neverAsk;
 
+    /** New questions may wait for you: "Ask me", or "the AI answers what it is sure about". */
     @Override
     public boolean manual() {
-        return !neverAsk && "ask".equals(Questions.askModeOf(Questions.askMode));
+        return !neverAsk && !"ai".equals(Questions.askModeOf(Questions.askMode));
     }
+
+    /** "ask", "ai" or "unsure" (the AI answers when it is sure, else asks you). */
+    String askMode() {
+        return neverAsk ? "ai" : Questions.askModeOf(Questions.askMode);
+    }
+
+    /** How sure the AI must be (0-100) to answer by itself in the "unsure" mode. */
+    public static int sureAt = 75;
+
+    /** A line for the question card: why you are asked. */
+    private String askNote = "";
 
     /** The job a form belongs to (used in the AI's answers). */
     public void setJob(String title, String company) {
@@ -590,10 +699,41 @@ public final class Bot implements LinkedIn.Resolver, LinkedIn.Hooks {
         if (fact != null) {
             return fact;
         }
-        if (manual()) {
-            Object got = askUser(question, kind, options, hint, placeholder, rejected, maxlen, extra);
+        String mode = askMode();
+        Ai.Sure guess = null;
+        if ("unsure".equals(mode)) {        // the AI answers what it is sure about; you the rest
+            guess = ai.sureAnswer(question, kind, options, store.knownForAi(), jobLabel(), hint, placeholder, rejected, maxlen);
+            if (guess.answer != null && guess.sure >= sureAt) {
+                store.putAnswer(key, guess.answer);
+                log("    AI answer (sure " + guess.sure + "%): " + Util.cut(question, 70) + " -> " + shown(guess.answer));
+                return guess.answer;
+            }
+            log("    The AI is not sure (" + guess.sure + "%" + (guess.why.isEmpty() ? "" : ": " + Util.cut(guess.why, 60))
+                    + "), so it asks you.");
+            if (guess.answer instanceof String && !String.valueOf(guess.answer).isEmpty()) {
+                List<String> more = extra == null ? new ArrayList<String>() : new ArrayList<String>(extra);
+                if (!more.contains(guess.answer)) {
+                    more.add((String) guess.answer);   // its guess is one of the suggestions
+                }
+                extra = more;
+            }
+            askNote = "The AI was not sure about this one" + (guess.why.isEmpty() ? "" : " (" + guess.why + ")")
+                    + ". You answer once; the app remembers it.";
+        }
+        if ("ask".equals(mode) || "unsure".equals(mode)) {
+            Object got;
+            try {
+                got = askUser(question, kind, options, hint, placeholder, rejected, maxlen, extra);
+            } finally {
+                askNote = "";
+            }
             if (got != AI_ANSWERS) {
                 return got;
+            }
+            if (guess != null && guess.answer != null) {   // you switched to AI answers meanwhile: its answer goes in
+                store.putAnswer(key, guess.answer);
+                log("    AI answer: " + Util.cut(question, 70) + " -> " + shown(guess.answer));
+                return guess.answer;
             }
         }
         Object ans = ai.answer(question, kind, options, store.knownForAi(), jobLabel(), hint, placeholder, rejected, maxlen);
@@ -689,7 +829,8 @@ public final class Bot implements LinkedIn.Resolver, LinkedIn.Hooks {
                 "options", options == null ? new ArrayList<Object>() : new ArrayList<Object>(options), "hint", hint == null ? "" : hint,
                 "rejected", new ArrayList<Object>(rejected), "maxlen", maxlen, "placeholder", placeholder == null ? "" : placeholder,
                 "job", jobInfo, "suggestions", sugg, "similar", Questions.similarAnswers(store.answersCopy(), key, options, kind),
-                "reason", "", "loading", true, "asked_at", Util.now(), "timeout_at", 0, "remember", !"textarea".equals(kind));
+                "reason", "", "loading", true, "asked_at", Util.now(), "timeout_at", 0, "remember", !"textarea".equals(kind),
+                "note", askNote);
 
         int minutes = Questions.askTimeoutMin;  // 0 = wait until you answer
         if (minutes > 0 && (engine.waiting.get(key) != null || Questions.DESK.away())) {

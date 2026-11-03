@@ -12,7 +12,7 @@ import java.util.Map;
 public final class Api {
     public static final String[] SETTINGS_KEYS = {"KEYWORDS", "LOCATION", "DATE_POSTED", "WORK_TYPE", "EXPERIENCE",
         "PAGES_PER_KEYWORD", "SEARCH_EVERY_MIN", "PER_HOUR", "PER_DAY", "MIN_SCORE", "SKIP_COMPANIES", "SKIP_TITLE_WORDS",
-        "NEW_QUESTIONS", "ASK_TIMEOUT_MIN", "UPDATE_SOURCE", "DAILY_GOAL", "AUTO_UPDATE"};
+        "NEW_QUESTIONS", "ASK_TIMEOUT_MIN", "UPDATE_SOURCE", "DAILY_GOAL", "AUTO_UPDATE", "APPROVE_FIRST"};
 
     /** Requests that change your data (it then goes to your account). */
     static final java.util.Set<String> CHANGES = new java.util.HashSet<String>(java.util.Arrays.asList("/api/settings",
@@ -106,6 +106,9 @@ public final class Api {
         if (p.equals("/api/tracker")) {
             return tracker();
         }
+        if (p.equals("/api/ready")) {
+            return Json.obj("ok", true, "items", engine.ready());
+        }
         if (p.equals("/api/sync")) {
             return Json.obj("ok", true, "sync", engine.sync.status(), "drive", engine.sync.drive(query.contains("fresh=1")));
         }
@@ -157,6 +160,8 @@ public final class Api {
                 "build", engine.platform.buildInfo(),
                 "auto_apply", autoApply(),
                 "copilot", engine.copilot.stats(Util.now()),
+                "ready", engine.store.idsWithStatus("ready").size(),
+                "approved", engine.store.idsWithStatus("approved").size(),
                 "sync", engine.sync.status(),
                 "platform", "android");
     }
@@ -414,6 +419,11 @@ public final class Api {
         }
         if (p.startsWith("/api/copilot/")) {
             return copilot(p.substring("/api/copilot/".length()), b);
+        }
+        if (p.equals("/api/ready")) {   // Apply / Skip / Apply all for the applications filled up to Submit
+            List<String> ids = Json.bool(b, "all") ? null : Json.strings(b.get("ids"));
+            int n = "skip".equals(Json.str(b, "op")) ? engine.skipReady(ids) : engine.approve(ids);
+            return Json.obj("ok", true, "count", n, "items", engine.ready(), "running", engine.running());
         }
         if (p.equals("/api/sync/now")) {
             if (!engine.account.signedIn()) {
@@ -690,6 +700,28 @@ public final class Api {
                 acc.refresh();
                 return Json.obj("ok", true, "account", acc.info());
             }
+            if (what.equals("google")) {   // Sign in with Google: Google's page in the browser
+                if (!Account.serverBuiltIn() && b.containsKey("server")) {
+                    acc.setServer(Json.str(b, "server"));
+                }
+                engine.platform.openLink(acc.googleStart(), "browser", "", "");
+                return Json.obj("ok", true);
+            }
+            if (what.equals("google-claim")) {    // back in the app without the link from the page after Google
+                Map<String, Object> info = acc.googleClaim();
+                if (info == null) {
+                    return Json.obj("ok", true, "pending", true);
+                }
+                Util.log("Signed in with Google as " + Json.str(info, "email") + ".");
+                engine.sync.kick(2);
+                return Json.obj("ok", true, "account", info);
+            }
+            if (what.equals("google-finish")) {   // back from Google's page
+                Map<String, Object> info = acc.googleFinish(Json.str(b, "code"));
+                Util.log("Signed in with Google as " + Json.str(info, "email") + ".");
+                engine.sync.kick(2);
+                return Json.obj("ok", true, "account", info);
+            }
             if (what.equals("logout")) {
                 if (engine.running()) {
                     throw new IllegalArgumentException("Stop auto apply first.");
@@ -702,7 +734,7 @@ public final class Api {
                 if (engine.running()) {
                     throw new IllegalArgumentException("Stop auto apply first.");
                 }
-                acc.delete(Json.str(b, "password"));
+                acc.delete(Json.str(b, "password"), Json.str(b, "confirm"));
                 engine.sync.forget();
                 Util.log("Your account was deleted from the server.");
                 return Json.obj("ok", true, "account", acc.info());
