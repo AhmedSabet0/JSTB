@@ -42,7 +42,7 @@ with it.
 | App | `git push` (a change in `android/`) | Actions builds both apps and publishes a release, version `<versionName>.<run number>` (like 3.0.12). `[skip release]` in the commit message: a test build only. |
 | Phones with the GitHub build | nothing | When the app opens it finds the release, downloads it and installs it when the screen turns off. Android asks once to allow installs and confirms the first update; from Android 12 on the next ones install without asking. Settings > App updates can turn this off. |
 | Phones with the Google Play build | nothing, once `PLAY_SERVICE_ACCOUNT_JSON` is set | Each release goes to Google Play (internal testing by default, `PLAY_TRACK` for another track); Play updates the app. The first upload is by hand. |
-| A given version number | Actions > Android > Run workflow, type `3.1.0` (or `git tag v3.1.0 && git push origin v3.1.0`) | The same release, with that number. |
+| A release right now | Actions > Android > Run workflow (empty: the next number; or type `3.1.0`) | The same release, without a push. A tag works too: `git tag v3.1.0 && git push origin v3.1.0`. |
 | Everybody must update now | Admin page > Settings > App > Oldest version allowed | Older apps show only an Update screen until they update. |
 | Tell everybody something | Admin page > Settings > App > Message | It shows on everyone's Home screen. |
 

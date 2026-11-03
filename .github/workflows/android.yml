@@ -2,7 +2,8 @@
 #   Every push to main that changes the app: a new release (version <versionName>.<run number>, like 3.0.12) with the
 #   APK, which phones with the GitHub build download and install by themselves, and the Google Play bundle (sent to
 #   Google Play too when PLAY_SERVICE_ACCOUNT_JSON is set). Put [skip release] in the commit message for a test build.
-#   A given version: Actions > Android > Run workflow > type it (3.1.0), or push a tag: git tag v3.1.0 && git push origin v3.1.0
+#   Actions > Android > Run workflow: a release now (the next number, or the version you type, like 3.1.0).
+#   A tag works too: git tag v3.1.0 && git push origin v3.1.0
 #   Without the keystore secrets there are only test builds (signed with a throwaway key).
 #
 # Repository settings > Secrets and variables > Actions:
@@ -21,7 +22,7 @@ on:
   workflow_dispatch:
     inputs:
       release:
-        description: "Version to release, like 3.1.0 (leave empty for a test build)"
+        description: "Version to release, like 3.1.0 (empty: the next number)"
         required: false
         default: ""
 
@@ -63,7 +64,8 @@ jobs:
           AUTO=""
           if [ -n "$REL" ]; then NAME="${REL#v}"
           elif [[ "$GITHUB_REF" == refs/tags/v* ]]; then NAME="${GITHUB_REF_NAME#v}"
-          elif [ "$GITHUB_EVENT_NAME" = push ] && [ "$GITHUB_REF" = refs/heads/main ] && ! grep -qiF '[skip release]' <<<"$MSG"; then
+          elif [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] \
+            || { [ "$GITHUB_EVENT_NAME" = push ] && [ "$GITHUB_REF" = refs/heads/main ] && ! grep -qiF '[skip release]' <<<"$MSG"; }; then
             NAME="$BASE.${{ github.run_number }}"
             AUTO=1
           fi
