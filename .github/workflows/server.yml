@@ -73,6 +73,7 @@ jobs:
           test -f ~/autoapply-server/.env || { echo "No ~/autoapply-server/.env on the VM: run setup-vm.sh there first (see README)."; exit 1; }
           tar -xzf /tmp/server.tgz -C ~/autoapply-server && rm /tmp/server.tgz
           cd ~/autoapply-server && sudo docker compose up -d --build --remove-orphans
+          sudo docker compose up -d --no-deps --force-recreate app
           echo "$SHA" > .deployed
           sudo docker image prune -f >/dev/null
           sleep 5 && sudo docker compose ps

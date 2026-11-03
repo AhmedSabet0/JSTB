@@ -57,7 +57,8 @@ SRC=$(find "$TMP" -mindepth 2 -maxdepth 2 -type d -name server | head -n 1)
 rsync -a --delete --exclude .env --exclude .deployed --exclude .deploy_failed --exclude tests --filter='P /auto-update.sh' \
   "$SRC"/ "$DIR"/
 
-if docker compose up -d --build --remove-orphans; then
+# Then restart the app on the new image for sure (Compose can keep a container when only build metadata changed).
+if docker compose up -d --build --remove-orphans && docker compose up -d --no-deps --force-recreate app; then
   echo "$SHA" > .deployed
   rm -f .deploy_failed
   docker image prune -f >/dev/null 2>&1 || true
