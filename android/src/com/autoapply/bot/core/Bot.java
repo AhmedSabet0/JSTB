@@ -161,6 +161,45 @@ public final class Bot {
         }
     }
 
+    public boolean neverAsk;
+
+    public void setJob(String title, String company) {
+        job = new LinkedHashMap<String, Object>();
+        job.put("title", title == null ? "" : title);
+        job.put("company", company == null ? "" : company);
+    }
+
+    public Object resolve(String question, String kind, List<String> options, String hint, String placeholder, boolean noCache,
+                          List<String> rejected, int maxlen, List<String> extra) {
+        String key = Util.normKey(question);
+        Object cached = noCache ? null : store.answer(key);
+        if (cached != null) {
+            return cached;
+        }
+        if (engine.profile != null) {
+            Profile.Hit hit = engine.profile.answer(question, kind, options, cvText, Util.now());
+            if (hit != null && hit.value != null) {
+                return hit.value;
+            }
+        }
+        if (ai != null && cvText != null && !cvText.isEmpty()) {
+            try {
+                String prompt = "Answer this job application question based on the candidate's CV.\n"
+                        + "Job: " + Json.str(job, "title") + " at " + Json.str(job, "company") + "\n"
+                        + "Candidate CV:\n" + Util.cut(cvText, 3000) + "\n\n"
+                        + "Question: " + question + "\n"
+                        + (options != null && !options.isEmpty() ? "Allowed Options: " + options + "\n" : "")
+                        + "Return ONLY the exact short answer or best option. If totally unknown, return UNKNOWN.";
+                String ans = ai.ask(prompt);
+                if (ans != null && !ans.trim().isEmpty() && !ans.equalsIgnoreCase("UNKNOWN")) {
+                    return ans.trim();
+                }
+            } catch (Exception ignored) {
+            }
+        }
+        return null;
+    }
+
     /** Always true: every application strictly waits for explicit user Apply tap. */
     boolean approveFirst() {
         return true;

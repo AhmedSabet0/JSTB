@@ -209,16 +209,17 @@ public final class LinkedInVoyager {
 
         // Prepopulate answers from Profile & Store facts
         if (profile != null) {
-            String phone = profile.phone();
+            Map<String, Object> p = profile.load();
+            String phone = Json.str(p, "phone");
             if (!phone.isEmpty()) answers.put("phone", phone);
-            String city = profile.city();
+            String city = Json.str(p, "city");
             if (!city.isEmpty()) answers.put("city", city);
-            int notice = profile.noticeDays();
-            if (notice > 0) answers.put("notice_period", String.valueOf(notice));
-            int salary = profile.expectedSalary();
-            if (salary > 0) answers.put("expected_salary", String.valueOf(salary));
+            String notice = Json.str(p, "notice_period");
+            if (!notice.isEmpty()) answers.put("notice_period", notice);
+            String salary = Json.str(p, "expected_salary");
+            if (!salary.isEmpty()) answers.put("expected_salary", salary);
             answers.put("work_authorization", "Yes");
-            answers.put("visa_sponsorship", profile.sponsorship() ? "Yes" : "No");
+            answers.put("visa_sponsorship", "No");
         }
 
         if (store != null) {

@@ -123,6 +123,10 @@ public final class Store {
     }
 
     // ------------------------------------------------------------------ jobs
+    public synchronized Map<String, Object> answers() {
+        return new LinkedHashMap<String, Object>(answers);
+    }
+
     public synchronized Map<String, Object> find(String id) {
         for (Map<String, Object> j : jobs) {
             if (id.equals(Json.str(j, "id"))) {
