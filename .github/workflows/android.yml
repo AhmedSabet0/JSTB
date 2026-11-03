@@ -1,9 +1,10 @@
-# Builds the app and publishes it by itself.
+# Builds the app, checks it on Android emulators, and publishes it by itself.
 #   Every push to main that changes the app: a new release (version <versionName>.<run number>, like 3.0.12) with the
 #   APK, which phones with the GitHub build download and install by themselves, and the Google Play bundle (sent to
 #   Google Play too when PLAY_SERVICE_ACCOUNT_JSON is set). Put [skip release] in the commit message for a test build.
 #   Actions > Android > Run workflow: a release now (the next number, or the version you type, like 3.1.0).
 #   A tag works too: git tag v3.1.0 && git push origin v3.1.0
+#   Nothing is published unless the app opens and keeps running on the emulators (Android 12, 14 and 16).
 #   Without the keystore secrets there are only test builds (signed with a throwaway key).
 #
 # Repository settings > Secrets and variables > Actions:
@@ -17,7 +18,7 @@ name: Android
 on:
   push:
     branches: [main]
-    paths: ["android/**", "!android/**/*.md", "!android/test/**", ".github/workflows/android.yml"]
+    paths: ["android/**", "!android/**/*.md", ".github/workflows/android.yml"]
     tags: ["v*"]
   workflow_dispatch:
     inputs:
@@ -36,6 +37,9 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-24.04
+    outputs:
+      release: ${{ steps.key.outputs.release }}
+      name: ${{ steps.v.outputs.name }}
     defaults:
       run:
         working-directory: android
@@ -113,9 +117,13 @@ jobs:
           ./build.sh
           FLAVOR=play ./build.sh
           SUFFIX=$([ -n "$NEW_KEY" ] && echo "-testkey" || true)
-          mkdir -p ../dist
+          mkdir -p ../dist ../dist-play
           cp out/github/AutoApply.apk "../dist/AutoApply-$VERSION_NAME$SUFFIX.apk"
           cp out/play/AutoApply.aab "../dist/AutoApply-$VERSION_NAME$SUFFIX-play.aab"
+          # The Google Play build as an APK too, for the emulator check
+          java -jar "$BUNDLETOOL" build-apks --bundle=out/play/AutoApply.aab --output=out/play/app.apks --mode=universal \
+            --ks=keystore/autoapply.jks --ks-pass="pass:$KS_PASS" --ks-key-alias=autoapply --key-pass="pass:$KS_PASS"
+          (cd out/play && unzip -q -o app.apks universal.apk) && cp out/play/universal.apk ../dist-play/AutoApply-play.apk
           rm -f keystore/autoapply.jks
 
       - uses: actions/upload-artifact@v4
@@ -123,29 +131,89 @@ jobs:
           name: AutoApply-${{ steps.v.outputs.name }}
           path: dist/*
 
+      - uses: actions/upload-artifact@v4
+        with:
+          name: play-apk
+          path: dist-play/*
+
+  # The app must open and keep running: installed on emulators, opened, sent to the background and back.
+  check:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { api: 31, build: github }
+          - { api: 34, build: github }
+          - { api: 36, build: github }
+          - { api: 36, build: play }
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ matrix.build == 'play' && 'play-apk' || format('AutoApply-{0}', needs.build.outputs.name) }}
+          path: apk
+
+      - name: Only the app to check
+        run: rm -f apk/*.aab && ls -la apk
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Open the app on Android ${{ matrix.api }}
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: ${{ matrix.api }}
+          target: google_apis
+          arch: x86_64
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          script: bash android/test/smoke.sh apk
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: check-${{ matrix.build }}-android-${{ matrix.api }}
+          path: |
+            apk/*.txt
+            apk/*.png
+
+  release:
+    needs: [build, check]
+    if: needs.build.outputs.release != ''
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: AutoApply-${{ needs.build.outputs.name }}
+          path: dist
+
       - name: Release
-        if: steps.key.outputs.release != ''
-        working-directory: .
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ steps.key.outputs.release }}
-          NAME: ${{ steps.v.outputs.name }}
+          TAG: ${{ needs.build.outputs.release }}
+          NAME: ${{ needs.build.outputs.name }}
         run: |
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" dist/* --clobber        # a release made on github.com: add the files
+          if gh release view "$TAG" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/* --clobber -R "$GITHUB_REPOSITORY"   # a release made on github.com: add the files
           else
-            gh release create "$TAG" dist/* --target "$GITHUB_SHA" --title "Auto Apply $NAME" --generate-notes
+            gh release create "$TAG" dist/* --target "$GITHUB_SHA" --title "Auto Apply $NAME" --generate-notes -R "$GITHUB_REPOSITORY"
           fi
 
       - name: Google Play upload set up?
         id: play
-        if: steps.key.outputs.release != ''
         env:
           PLAY_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
         run: echo "ready=$([ -n "$PLAY_JSON" ] && echo yes || echo no)" >> "$GITHUB_OUTPUT"
 
       - name: Upload to Google Play
-        if: steps.key.outputs.release != '' && steps.play.outputs.ready == 'yes'
+        if: steps.play.outputs.ready == 'yes'
         uses: r0adkll/upload-google-play@v1
         with:
           serviceAccountJsonPlainText: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
