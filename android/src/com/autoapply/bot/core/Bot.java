@@ -38,6 +38,67 @@ public final class Bot {
         }
     }
 
+    // ------------------------------------------------------------------ search URL & display
+    static String code(String value, String[][] table) {
+        List<String> out = new ArrayList<String>();
+        for (String part : String.valueOf(value == null ? "" : value).toLowerCase(Locale.ROOT).split("[,;\\s]+")) {
+            for (String[] kv : table) {
+                if (kv[0].equals(part.trim()) && !out.contains(kv[1])) {
+                    out.add(kv[1]);
+                }
+            }
+        }
+        return Util.join(",", out);
+    }
+
+    public static final String[][] DATE_CODES = {{"day", "r86400"}, {"24h", "r86400"}, {"week", "r604800"}, {"month", "r2592000"},
+        {"any", ""}};
+    public static final String[][] WORK_CODES = {{"onsite", "1"}, {"on-site", "1"}, {"remote", "2"}, {"hybrid", "3"}};
+    public static final String[][] EXP_CODES = {{"internship", "1"}, {"entry", "2"}, {"associate", "3"}, {"mid-senior", "4"},
+        {"mid", "4"}, {"senior", "4"}, {"director", "5"}, {"executive", "6"}};
+
+    private static String enc(String s) {
+        try {
+            return URLEncoder.encode(s, "UTF-8");
+        } catch (UnsupportedEncodingException e) {
+            return s;
+        }
+    }
+
+    public static String searchUrl(String keyword, String location, Map<String, String> cfg, int pageNo) {
+        StringBuilder q = new StringBuilder("keywords=" + enc(keyword) + "&f_AL=true&sortBy=DD");
+        if (location != null && !location.isEmpty()) {
+            q.append("&location=").append(enc(location));
+        }
+        String dp = cfg.get("DATE_POSTED") == null || cfg.get("DATE_POSTED").trim().isEmpty() ? "week"
+                : cfg.get("DATE_POSTED").trim().toLowerCase(Locale.ROOT);
+        String date = "r604800";
+        for (String[] kv : DATE_CODES) {
+            if (kv[0].equals(dp)) {
+                date = kv[1];
+            }
+        }
+        if (!date.isEmpty()) {
+            q.append("&f_TPR=").append(date);
+        }
+        String work = code(cfg.get("WORK_TYPE"), WORK_CODES);
+        if (!work.isEmpty()) {
+            q.append("&f_WT=").append(enc(work));
+        }
+        String exp = code(cfg.get("EXPERIENCE"), EXP_CODES);
+        if (!exp.isEmpty()) {
+            q.append("&f_E=").append(enc(exp));
+        }
+        if (pageNo > 0) {
+            q.append("&start=").append(pageNo * 25);
+        }
+        return "https://www.linkedin.com/jobs/search/?" + q;
+    }
+
+    public static String shown(Object v) {
+        return v instanceof List ? Util.join(", ", Json.strings(v)) : String.valueOf(v);
+    }
+
     // ------------------------------------------------------------------ pacing
     /** {last hour, today} */
     public static int[] appliedCounts(Map<String, Object> state, double now) {
@@ -182,17 +243,14 @@ public final class Bot {
                 return hit.value;
             }
         }
-        if (ai != null && cvText != null && !cvText.isEmpty()) {
+        if (ai != null) {
             try {
-                String prompt = "Answer this job application question based on the candidate's CV.\n"
-                        + "Job: " + Json.str(job, "title") + " at " + Json.str(job, "company") + "\n"
-                        + "Candidate CV:\n" + Util.cut(cvText, 3000) + "\n\n"
-                        + "Question: " + question + "\n"
-                        + (options != null && !options.isEmpty() ? "Allowed Options: " + options + "\n" : "")
-                        + "Return ONLY the exact short answer or best option. If totally unknown, return UNKNOWN.";
-                String ans = ai.ask(prompt);
-                if (ans != null && !ans.trim().isEmpty() && !ans.equalsIgnoreCase("UNKNOWN")) {
-                    return ans.trim();
+                Object ans = ai.answer(question, kind, options, store.answers(),
+                        Json.str(job, "title") + " at " + Json.str(job, "company"),
+                        hint, placeholder, rejected, maxlen);
+                if (ans != null) {
+                    store.putAnswer(key, ans);
+                    return ans;
                 }
             } catch (Exception ignored) {
             }
