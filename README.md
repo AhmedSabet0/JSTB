@@ -15,7 +15,8 @@ cp -r JSTB/server ~/autoapply-server
 cd ~/autoapply-server && bash setup-vm.sh          # asks for the domain, e.g. 145-241-153-177.sslip.io
 ```
 
-It prints the admin password. Open `https://DOMAIN/admin`, sign in, and add the OpenRouter key in Settings.
+It prints the admin password and installs the timer that keeps the server up to date by itself. Open
+`https://DOMAIN/admin`, sign in, and add the OpenRouter key in Settings.
 
 **2. GitHub secrets and variables** (repo > Settings > Secrets and variables > Actions):
 
@@ -23,29 +24,29 @@ It prints the admin password. Open `https://DOMAIN/admin`, sign in, and add the 
 |---|---|---|
 | `KEYSTORE_BASE64` | secret | `base64 -w0 autoapply.jks` (PowerShell: `[Convert]::ToBase64String([IO.File]::ReadAllBytes("autoapply.jks"))`) |
 | `KS_PASS` | secret | the keystore password |
-| `SERVER_SSH_KEY` | secret | the VM's private SSH key (the whole file) |
-| `SERVER_URL` | variable | `https://145-241-153-177.sslip.io` |
-| `SERVER_HOST` | variable | `145.241.153.177` |
-| `SERVER_USER` | variable | `ubuntu` |
+| `SERVER_SSH_KEY` | secret | optional (the VM updates itself): the VM's private SSH key, for an instant deploy |
+| `SERVER_URL` | variable | optional: `https://145-241-153-177.sslip.io` is the default |
+| `SERVER_HOST` | variable | optional, with `SERVER_SSH_KEY`: `145.241.153.177` |
+| `SERVER_USER` | variable | optional, with `SERVER_SSH_KEY`: `ubuntu` (default) |
 | `PLAY_SERVICE_ACCOUNT_JSON` | secret | optional, after the first Play release: uploads new versions to Google Play |
 | `PLAY_TRACK` | variable | optional: `internal` (default), `alpha` (closed testing), `production` |
 
 The keystore never goes in this repo (`.gitignore` keeps `*.jks` out). Keep a backup: every update must be signed
 with it.
 
-## Deploy and update
+## Deploy and update: automatic
 
-| What | Command | What happens |
+| What | How | What happens |
 |---|---|---|
-| Server | `git push` (a change in `server/`) | Actions runs the server tests, copies the files to the VM and restarts it. `.env` and the database stay. |
-| App, new version | github.com: **Actions > Android > Run workflow**, type the version (`3.1.0`). Or from a PC: `git tag v3.1.0 && git push origin v3.1.0` | Actions builds both apps and makes a GitHub release with the APK and the Play bundle. |
-| Phones with the GitHub build | nothing more | The app checks the latest release when it opens (at most every 6 hours) and offers *Download and install*; Settings > App updates checks now. |
-| Phones with the Google Play build | upload the bundle (or let Actions do it with `PLAY_SERVICE_ACCOUNT_JSON`) | Google Play updates the app. |
-| Everybody must update now | Admin page > Settings > App > Oldest version allowed | Older apps show only an Update screen until they update. Do this after the new version is out. |
+| Server | `git push` (a change in `server/`) | Actions runs the server tests. The VM updates itself to the tested version within 5 minutes (`server/auto-update.sh`, a timer that `setup-vm.sh` installs); `.env` and the database stay. With the `SERVER_SSH_KEY` secret Actions also deploys right away. |
+| App | `git push` (a change in `android/`) | Actions builds both apps and publishes a release, version `<versionName>.<run number>` (like 3.0.12). `[skip release]` in the commit message: a test build only. |
+| Phones with the GitHub build | nothing | When the app opens it finds the release, downloads it and installs it when the screen turns off. Android asks once to allow installs and confirms the first update; from Android 12 on the next ones install without asking. Settings > App updates can turn this off. |
+| Phones with the Google Play build | nothing, once `PLAY_SERVICE_ACCOUNT_JSON` is set | Each release goes to Google Play (internal testing by default, `PLAY_TRACK` for another track); Play updates the app. The first upload is by hand. |
+| A given version number | Actions > Android > Run workflow, type `3.1.0` (or `git tag v3.1.0 && git push origin v3.1.0`) | The same release, with that number. |
+| Everybody must update now | Admin page > Settings > App > Oldest version allowed | Older apps show only an Update screen until they update. |
 | Tell everybody something | Admin page > Settings > App > Message | It shows on everyone's Home screen. |
 
-Version numbers come from the tag (`v3.1.0` is version 3.1.0) and the Actions run number (the version code). The
-admin page lists the versions in use.
+Releases need the `KEYSTORE_BASE64` and `KS_PASS` secrets; until they are set, pushes make test builds only.
 
 ## Actions
 

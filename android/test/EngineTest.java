@@ -146,8 +146,8 @@ public class EngineTest {
             return Json.obj("name", "1.0", "code", 1);
         }
 
-        public void installUpdate(String url, String version) {
-            events.add("install:" + url + ":" + version);
+        public void installUpdate(String url, String version, boolean auto) {
+            events.add((auto ? "install-auto:" : "install:") + url + ":" + version);
             updState = "downloading";
         }
 
@@ -851,6 +851,21 @@ public class EngineTest {
         check("dashboard state carries the update", Json.bool(last, "available") && "1.2".equals(Json.str(last, "version"))
                 && "1.0".equals(Json.str(Json.map(u.get("current")), "name")), u);
         check("check saved for later", new File(d, "update_check.json").isFile());
+        boolean autoStarted = waitFor(() -> p.events.stream().anyMatch(x -> x.startsWith("install-auto:")
+                && x.endsWith("/AutoApply-1.2.apk:1.2")), 5);
+        check("found by itself: the update downloads by itself (it installs when the screen turns off)", autoStarted, p.events);
+        api(a, "/api/update/check", Json.obj("auto", true));
+        Util.realSleep(0.5);
+        check("each version is tried by itself once", p.events.stream().filter(x -> x.startsWith("install-auto:")).count() == 1, p.events);
+        File d2 = fresh("update_manual");
+        write(d2, "config.json", Json.pretty(config("UPDATE_SOURCE", "AhmedSabet0/JSTB-new", "AUTO_UPDATE", "0")));
+        TestPlatform p2 = new TestPlatform("real");
+        Api a2 = new Api(new Engine(p2, d2));
+        api(a2, "/api/update/check", Json.obj("auto", true));
+        waitFor(() -> Json.map(Json.map(api(a2, "/api/state", null).get("update")).get("last")).containsKey("available"), 15);
+        Util.realSleep(0.5);
+        check("updates by themselves can be turned off", p2.events.stream().noneMatch(x -> x.startsWith("install-auto:"))
+                && Json.bool(Json.map(Json.map(api(a2, "/api/state", null).get("update")).get("last")), "available"), p2.events);
         inst = api(a, "/api/update/install", Json.obj());
         check("install starts the download", Json.bool(inst, "ok") && p.events.stream().anyMatch(x -> x.startsWith("install:")
                 && x.endsWith("/AutoApply-1.2.apk:1.2")), p.events);

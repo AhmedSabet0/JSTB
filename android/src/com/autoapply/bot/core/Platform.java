@@ -54,8 +54,9 @@ public interface Platform {
     /** {"name": "1.1", "code": 2} */
     Map<String, Object> appVersion();
 
-    /** Download the APK at `url` and ask Android to install it over this app. Progress via updateState(). */
-    void installUpdate(String url, String version);
+    /** Download the APK at `url` and ask Android to install it over this app. Progress via updateState(). `auto`: the
+     *  app found it by itself; then it is installed when nobody is using the app (the screen turns off). */
+    void installUpdate(String url, String version, boolean auto);
 
     /** {"state": idle|downloading|installing|confirm|done|error|permission, "progress": 0-100, "message": ""} */
     Map<String, Object> updateState();

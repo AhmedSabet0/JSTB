@@ -841,7 +841,11 @@
           perm.battery ? '' : '<button class="btn" data-perm="battery" type="button">Background</button>'}`]);
     }
     const u = s.update || {};
-    if (!u.disabled && u.last && u.last.available && !['downloading', 'installing', 'confirm'].includes((u.download || {}).state)) {
+    const dst = (u.download || {}).state;
+    if (!u.disabled && u.last && u.last.available && dst === 'ready') {
+      items.push(['info', `<b>Version ${esc(u.last.version)} is downloaded</b><span>It installs by itself when the screen turns off. Your jobs, answers and sign-ins stay.</span>`,
+        `<button class="btn" data-act="install-now" type="button"${s.running ? ' disabled' : ''}>Install now</button>`]);
+    } else if (!u.disabled && u.last && u.last.available && !['downloading', 'installing', 'confirm'].includes(dst)) {
       items.push(['info', `<b>Version ${esc(u.last.version)} is ready</b><span>Your answers and sign-in stay.</span>`,
         '<button class="btn" data-act="update" type="button">See the update</button>']);
     }
@@ -857,6 +861,7 @@
       if (a === 'answers') go('info');
       if (a === 'acc-check') accCheck(b);
       if (a === 'update') { go('settings'); setTimeout(() => $('update-card').scrollIntoView({ behavior: 'smooth' }), 300); }
+      if (a === 'install-now') api('/api/update/install', {}).then(() => toast('Installing the update…')).catch((e) => toast(e.message, true));
     }));
     box.querySelectorAll('[data-perm]').forEach((b) => b.addEventListener('click',
       () => api('/api/permission', { which: b.dataset.perm }).catch((e) => toast(e.message, true))));
@@ -1262,6 +1267,7 @@
         const vals = String(d[box.dataset.key] || '').toLowerCase().split(/[,;\s]+/);
         box.querySelectorAll('input').forEach((i) => { i.checked = vals.includes(i.value); });
       });
+      $('s-AUTO_UPDATE').checked = String(d.AUTO_UPDATE) !== '0';
       const newq = String(d.NEW_QUESTIONS || '').toLowerCase() === 'ai' ? 'ai' : 'ask';
       document.querySelectorAll('input[name=newq]').forEach((r) => { r.checked = r.value === newq; });
       if (!$('s-DATE_POSTED').value) $('s-DATE_POSTED').value = 'week';
@@ -1401,9 +1407,16 @@
     const btn = $('btn-update-install');
     btn.hidden = !avail;
     btn.disabled = busyNow || running;
-    btn.textContent = running ? 'Stop the app to update' : busyNow ? 'Updating…' : 'Download and install';
+    btn.textContent = running ? 'Stop the app to update' : busyNow ? 'Updating…' : st === 'ready' ? 'Install now' : 'Download and install';
     $('btn-update-check').disabled = !!u.checking || busyNow;
   }
+  $('s-AUTO_UPDATE').addEventListener('change', async () => {
+    const on = $('s-AUTO_UPDATE').checked;
+    try {
+      await api('/api/settings', { AUTO_UPDATE: on ? '1' : '0' });
+      toast(on ? 'New versions install by themselves.' : 'Updates wait for you to install them.');
+    } catch (e) { toast(e.message, true); }
+  });
   $('btn-update-check').addEventListener('click', async () => {
     try { await api('/api/update/check', {}); } catch (e) { toast(e.message, true); }
     refresh();

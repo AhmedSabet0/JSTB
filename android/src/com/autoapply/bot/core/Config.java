@@ -26,6 +26,7 @@ public final class Config {
         {"ASK_TIMEOUT_MIN", "10"},
         {"UPDATE_SOURCE", "AhmedSabet0/JSTB"},
         {"DAILY_GOAL", "10"},
+        {"AUTO_UPDATE", "1"},
         {"SETUP_DONE", ""},
     };
 

@@ -6,7 +6,7 @@ Helps you send many job applications with little typing, in two builds:
 |---|---|---|
 | Jobs you apply to yourself, with the app's help | Yes | Yes |
 | Auto apply (the app sends LinkedIn Easy Apply forms by itself) | No | Yes |
-| Updates | Google Play | From GitHub releases, in the app |
+| Updates | Google Play | By itself from GitHub releases: downloads, then installs when the screen turns off |
 | Background service, LinkedIn sign-in inside the app | No | Yes |
 
 The Google Play build never sends an application by itself and never drives LinkedIn: you open each job, check the

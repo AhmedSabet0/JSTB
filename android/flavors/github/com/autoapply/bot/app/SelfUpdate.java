@@ -24,6 +24,8 @@ import java.net.URL;
 import java.util.Arrays;
 
 /** The GitHub build updates itself: download the APK of a newer release and ask Android to install it over this app.
+ *  An update the app found by itself waits, downloaded, until the screen turns off, so it never closes the app while
+ *  you use it; from Android 12 on it then installs without asking (after the first update the app installed itself).
  *  (Not in the Google Play build: Play does not allow apps to update themselves.) */
 final class SelfUpdate {
     static final boolean AVAILABLE = true;
@@ -31,14 +33,28 @@ final class SelfUpdate {
     private SelfUpdate() {
     }
 
-    static void install(final AndroidPlatform p, final String url, final String version) {
+    /** The update downloaded by itself, waiting for the screen to turn off. */
+    private static volatile File readyApk;
+    private static volatile String readyVersion = "";
+
+    static void install(final AndroidPlatform p, final String url, final String version, final boolean auto) {
         synchronized (p.updLock) {
             String st = Json.str(p.upd, "state");
             if (st.equals("downloading") || st.equals("installing")) {
                 return;
             }
+            if (st.equals("ready") && version.equals(readyVersion) && readyApk != null && readyApk.isFile()) {
+                if (!auto) {
+                    installReady(p);  // Install now
+                }
+                return;
+            }
         }
         if (Build.VERSION.SDK_INT >= 26 && !p.app.getPackageManager().canRequestPackageInstalls()) {
+            if (auto) {  // found by itself: ask for the permission only when you tap Install
+                p.setUpdate("permission", 0, "Version " + version + " is out. Tap Download and install: Android asks once to allow it.");
+                return;
+            }
             p.setUpdate("permission", 0, "Allow \"Install unknown apps\" for Auto Apply (Android asks once), then tap Download and install again.");
             p.main.post(new Runnable() {
                 @Override
@@ -73,6 +89,15 @@ final class SelfUpdate {
                         p.setUpdate("error", 0, problem);
                         return;
                     }
+                    if (auto) {
+                        readyApk = apk;
+                        readyVersion = version;
+                        p.setUpdate("ready", 100, "Version " + version + " is downloaded. It installs when the screen turns off, or tap Install now.");
+                        if (!p.activityResumed && !p.engine.running()) {
+                            installReady(p);  // nobody is looking at the app
+                        }
+                        return;
+                    }
                     p.setUpdate("installing", 100, "Installing version " + version + "...");
                     installApk(p, apk);
                 } catch (Exception e) {
@@ -80,6 +105,27 @@ final class SelfUpdate {
                 }
             }
         }, "update").start();
+    }
+
+    /** Installs the update that waits (when the screen turned off, or Install now). */
+    static void installReady(final AndroidPlatform p) {
+        final File apk = readyApk;
+        synchronized (p.updLock) {
+            if (!"ready".equals(Json.str(p.upd, "state")) || apk == null || !apk.isFile()) {
+                return;
+            }
+            p.upd = Json.obj("state", "installing", "progress", 100, "message", "Installing version " + readyVersion + "...");
+        }
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    installApk(p, apk);
+                } catch (Exception e) {
+                    p.setUpdate("error", 0, "Update failed: " + Util.shortError(e, 150));
+                }
+            }
+        }, "update-install").start();
     }
 
     private static void download(AndroidPlatform p, String url, File dest, String version) throws IOException {
@@ -151,6 +197,11 @@ final class SelfUpdate {
         PackageInstaller.SessionParams params = new PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL);
         params.setAppPackageName(p.app.getPackageName());
         params.setSize(apk.length());
+        if (Build.VERSION.SDK_INT >= 31) {
+            // No "Update?" window when Android allows it: the app installed its current version itself (the first
+            // update still asks once) and targets a recent Android.
+            params.setRequireUserAction(PackageInstaller.SessionParams.USER_ACTION_NOT_REQUIRED);
+        }
         int id = installer.createSession(params);
         PackageInstaller.Session session = installer.openSession(id);
         try {

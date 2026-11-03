@@ -1,6 +1,7 @@
-# Tests the server on every push to server/, then deploys it to the VM: copies the files and rebuilds the containers.
-# The VM keeps its own .env and database; they are never overwritten. Users' apps keep working during the restart
-# (they retry their reports).
+# Tests the server on every push to server/. The VM updates itself to every version that passed (server/auto-update.sh,
+# a timer that setup-vm.sh installs, checks every 5 minutes); with the secrets below, this workflow also deploys
+# right away over SSH. The VM keeps its own .env and database; they are never overwritten. Users' apps keep working
+# during the restart (they retry their reports).
 #
 # Repository settings > Secrets and variables > Actions:
 #   secret   SERVER_SSH_KEY   the VM's private SSH key (the whole file)
@@ -24,7 +25,7 @@ jobs:
       run:
         working-directory: server
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
@@ -42,13 +43,13 @@ jobs:
           HOST: ${{ vars.SERVER_HOST }}
         run: |
           if [ -z "$SERVER_SSH_KEY" ] || [ -z "$HOST" ]; then
-            echo "::warning::Not deployed: add the SERVER_SSH_KEY secret and the SERVER_HOST variable (see README)."
+            echo "::notice::The VM updates itself within 5 minutes (auto-update.sh). For an instant deploy, add the SERVER_SSH_KEY secret and the SERVER_HOST variable."
             echo "ok=no" >> "$GITHUB_OUTPUT"
           else
             echo "ok=yes" >> "$GITHUB_OUTPUT"
           fi
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         if: steps.ready.outputs.ok == 'yes'
 
       - name: SSH key
@@ -67,12 +68,15 @@ jobs:
           TARGET="${{ vars.SERVER_USER || 'ubuntu' }}@${{ vars.SERVER_HOST }}"
           tar -C server --exclude=.env --exclude='*.db' --exclude=__pycache__ --exclude=tests -czf server.tgz .
           scp -i ~/.ssh/id_vm server.tgz "$TARGET:/tmp/server.tgz"
-          ssh -i ~/.ssh/id_vm "$TARGET" 'set -e
-            test -f ~/autoapply-server/.env || { echo "No ~/autoapply-server/.env on the VM: run setup-vm.sh there first (see README)."; exit 1; }
-            tar -xzf /tmp/server.tgz -C ~/autoapply-server && rm /tmp/server.tgz
-            cd ~/autoapply-server && sudo docker compose up -d --build --remove-orphans
-            sudo docker image prune -f >/dev/null
-            sleep 5 && sudo docker compose ps'
+          ssh -i ~/.ssh/id_vm "$TARGET" "SHA=$GITHUB_SHA bash -s" <<'EOS'
+          set -e
+          test -f ~/autoapply-server/.env || { echo "No ~/autoapply-server/.env on the VM: run setup-vm.sh there first (see README)."; exit 1; }
+          tar -xzf /tmp/server.tgz -C ~/autoapply-server && rm /tmp/server.tgz
+          cd ~/autoapply-server && sudo docker compose up -d --build --remove-orphans
+          echo "$SHA" > .deployed
+          sudo docker image prune -f >/dev/null
+          sleep 5 && sudo docker compose ps
+          EOS
 
       - name: Check the server
         if: steps.ready.outputs.ok == 'yes' && vars.SERVER_URL != ''

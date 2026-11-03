@@ -73,6 +73,8 @@ for _ in $(seq 1 60); do
   if curl -fsS --max-time 5 --resolve "$DOMAIN:443:127.0.0.1" "https://$DOMAIN/health" >/dev/null 2>&1; then
     echo "Running: https://$DOMAIN/health answers OK"
     echo "Admin page: https://$DOMAIN/admin"
+    say "Updates"
+    sudo bash auto-update.sh --install
     exit 0
   fi
   sleep 5

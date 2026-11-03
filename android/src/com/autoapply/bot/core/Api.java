@@ -12,7 +12,7 @@ import java.util.Map;
 public final class Api {
     public static final String[] SETTINGS_KEYS = {"KEYWORDS", "LOCATION", "DATE_POSTED", "WORK_TYPE", "EXPERIENCE",
         "PAGES_PER_KEYWORD", "SEARCH_EVERY_MIN", "PER_HOUR", "PER_DAY", "MIN_SCORE", "SKIP_COMPANIES", "SKIP_TITLE_WORDS",
-        "NEW_QUESTIONS", "ASK_TIMEOUT_MIN", "UPDATE_SOURCE", "DAILY_GOAL"};
+        "NEW_QUESTIONS", "ASK_TIMEOUT_MIN", "UPDATE_SOURCE", "DAILY_GOAL", "AUTO_UPDATE"};
 
     private final Engine engine;
     private final java.io.File updateFile;
@@ -171,9 +171,13 @@ public final class Api {
     }
 
     /** Check in the background (auto checks run at most every 6 hours). */
-    void startUpdateCheck(boolean force) {
+    void startUpdateCheck(final boolean force) {
         Map<String, Object> last = lastCheck;
-        if (!selfUpdates() || checking || (!force && last != null && Util.now() - Json.dbl(last, "checked_at", 0) < 6 * 3600)) {
+        if (!selfUpdates() || checking) {
+            return;
+        }
+        if (!force && last != null && Util.now() - Json.dbl(last, "checked_at", 0) < 6 * 3600) {
+            autoInstall(last);  // checked lately: install what it found, if that was not tried yet
             return;
         }
         checking = true;
@@ -186,11 +190,33 @@ public final class Api {
                     Map<String, Object> r = Updater.check(source, current);
                     lastCheck = r;
                     Util.writeText(updateFile, Json.pretty(r));
+                    if (!force) {
+                        autoInstall(r);
+                    }
                 } finally {
                     checking = false;
                 }
             }
         }, "update-check").start();
+    }
+
+    /** The GitHub build updates itself: a newer version the automatic check finds is downloaded and installed by
+     *  itself (Settings > App updates turns that off), never while auto apply runs. Each version is tried once. */
+    private volatile String autoTried = "";
+
+    boolean autoUpdates() {
+        return !"0".equals(engine.config.load().get("AUTO_UPDATE"));
+    }
+
+    private void autoInstall(Map<String, Object> r) {
+        String v = Json.str(r, "version");
+        if (!Json.bool(r, "available") || v.isEmpty() || v.equals(autoTried) || !autoUpdates() || engine.running()
+                || Updater.compare(v, Json.str(engine.platform.appVersion(), "name")) <= 0) {
+            return;
+        }
+        autoTried = v;
+        Util.log("Version " + v + " is out: downloading it (it installs when the screen turns off)");
+        engine.platform.installUpdate(Json.str(r, "url"), v, true);
     }
 
     private Map<String, Object> settings() {
@@ -517,7 +543,7 @@ public final class Api {
             if (last == null || !Json.bool(last, "available")) {
                 throw new IllegalArgumentException("No update to install. Tap Check for updates.");
             }
-            engine.platform.installUpdate(Json.str(last, "url"), Json.str(last, "version"));
+            engine.platform.installUpdate(Json.str(last, "url"), Json.str(last, "version"), false);
             return Json.obj("ok", true, "update", updateInfo());
         }
         return null;

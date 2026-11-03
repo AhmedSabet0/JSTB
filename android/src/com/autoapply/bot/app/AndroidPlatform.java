@@ -2,6 +2,8 @@ package com.autoapply.bot.app;
 
 import android.app.NotificationManager;
 import android.content.ActivityNotFoundException;
+import android.content.BroadcastReceiver;
+import android.content.IntentFilter;
 import android.content.ClipData;
 import android.content.Context;
 import android.content.Intent;
@@ -64,6 +66,9 @@ public final class AndroidPlatform implements Platform {
         Notifs.channels(app);
         engine = new Engine(this, app.getFilesDir());
         api = new Api(engine);
+        if (SelfUpdate.AVAILABLE) {
+            watchScreen();
+        }
     }
 
     MainActivity activity() {
@@ -316,8 +321,26 @@ public final class AndroidPlatform implements Platform {
     }
 
     @Override
-    public void installUpdate(String url, String version) {
-        SelfUpdate.install(this, url, version);  // the Google Play build has none: Play updates it
+    public void installUpdate(String url, String version, boolean auto) {
+        SelfUpdate.install(this, url, version, auto);  // the Google Play build has none: Play updates it
+    }
+
+    /** An update downloaded by itself installs when the screen turns off (nobody is using the app then). */
+    private void watchScreen() {
+        BroadcastReceiver off = new BroadcastReceiver() {
+            @Override
+            public void onReceive(Context c, Intent i) {
+                if (!engine.running()) {
+                    SelfUpdate.installReady(AndroidPlatform.this);
+                }
+            }
+        };
+        IntentFilter f = new IntentFilter(Intent.ACTION_SCREEN_OFF);
+        if (Build.VERSION.SDK_INT >= 33) {
+            app.registerReceiver(off, f, Context.RECEIVER_NOT_EXPORTED);
+        } else {
+            app.registerReceiver(off, f);
+        }
     }
 
     @Override

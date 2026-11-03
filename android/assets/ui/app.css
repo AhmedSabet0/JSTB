@@ -527,6 +527,9 @@ details summary { cursor: pointer; color: var(--action); font-size: 14px; margin
   max-height: 220px; overflow: auto; margin: 6px 0 10px; }
 .update-version { margin: 4px 0 0; }
 .update-source { margin: 16px 0 0; }
+.auto-update { align-items: flex-start; margin-top: 14px; }
+.auto-update input { margin-top: 3px; }
+.auto-update small { display: block; color: var(--ink-2); font-size: 13.5px; }
 .hint.bad-text { color: var(--error); }
 .meter { height: 6px; border-radius: 999px; background: var(--surface-2); margin: 0 0 12px; overflow: hidden; }
 .meter i { display: block; height: 100%; width: 0; background: var(--action); border-radius: inherit; transition: width .4s; }

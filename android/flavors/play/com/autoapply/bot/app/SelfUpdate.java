@@ -7,7 +7,11 @@ final class SelfUpdate {
     private SelfUpdate() {
     }
 
-    static void install(AndroidPlatform p, String url, String version) {
+    static void install(AndroidPlatform p, String url, String version, boolean auto) {
         p.setUpdate("error", 0, "Updates come from Google Play.");
+    }
+
+    static void installReady(AndroidPlatform p) {
+        // Google Play installs updates
     }
 }

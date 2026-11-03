@@ -107,8 +107,8 @@ public class UiServer {
             return Json.obj("name", "1.0", "code", 1);
         }
 
-        public void installUpdate(String url, String version) {
-            EVENTS.add("install:" + url + ":" + version);
+        public void installUpdate(String url, String version, boolean auto) {
+            EVENTS.add((auto ? "install-auto:" : "install:") + url + ":" + version);
             updState = "downloading";
         }
 
