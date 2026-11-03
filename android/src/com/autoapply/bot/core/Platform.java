@@ -39,6 +39,12 @@ public interface Platform {
     /** True when a LinkedIn session cookie is present. */
     boolean signedIn();
 
+    /** Retrieve cookies for a given URL (e.g. from CookieManager). */
+    default String getCookies(String url) { return ""; }
+
+    /** Show a quick toast notification to the user. */
+    default void toast(String msg) {}
+
     void share(File file, String mime, String title);
 
     /** {notifications, battery, overlay: true/false} */

@@ -28,7 +28,7 @@ public final class Session {
         }
         jobs.add(Json.obj("id", jobId, "status", status, "title", title == null || title.isEmpty() ? "Job " + jobId : title,
                 "company", company == null ? "" : company, "score", score, "reason", reason == null ? "" : reason,
-                "url", String.format(LinkedIn.JOB_URL, jobId), "ts", Util.now()));
+                "url", "https://www.linkedin.com/jobs/view/" + jobId + "/", "ts", Util.now()));
     }
 
     /** The question(s) a stuck form failed on, from "Form error: question: message / ...". */

@@ -177,7 +177,7 @@ public final class Questions {
             value = m.group().replace(",", "").replaceAll("\\.0+$", "");
         } else {
             int maxlen = (int) Json.num(item, "maxlen", 0);
-            value = maxlen > 0 && text.length() > maxlen ? LinkedIn.shorten(text, maxlen) : text;
+            value = maxlen > 0 && text.length() > maxlen ? Util.cut(text, maxlen) : text;
         }
         if (Json.strings(item.get("rejected")).contains(value)) {
             return new Object[]{null, "LinkedIn already rejected this answer. Try a different one."};
