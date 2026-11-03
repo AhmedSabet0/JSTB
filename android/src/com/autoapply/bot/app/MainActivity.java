@@ -81,7 +81,6 @@ public final class MainActivity extends Activity {
         platform = AndroidPlatform.get(this);
         platform.activity = new WeakReference<MainActivity>(this);
         dark = (getResources().getConfiguration().uiMode & Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES;
-        styleBars();
         root = new FrameLayout(this);
         dash = new WebView(this);
         WebSettings s = dash.getSettings();
@@ -135,6 +134,7 @@ public final class MainActivity extends Activity {
         root.addView(dash, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         fitBars();
         setContentView(root);
+        styleBars();  // after setContentView: the bars' controller only exists once the window has its views
         if (Build.VERSION.SDK_INT >= 33) {
             Back33.register(this);
         }
@@ -149,6 +149,7 @@ public final class MainActivity extends Activity {
     @SuppressWarnings("deprecation")
     private void styleBars() {
         Window w = getWindow();
+        w.getDecorView();  // makes sure the window's views exist (getInsetsController needs them)
         if (Build.VERSION.SDK_INT >= 30) {
             // Edge to edge (Android 15+ always draws apps under the bars): the app pads itself in fitBars().
             w.setDecorFitsSystemWindows(false);
