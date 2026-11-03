@@ -37,6 +37,8 @@ public final class Engine {
     public final Reporter reporter;
     /** Jobs you apply to yourself with the app's help, and their stages. */
     public final Copilot copilot;
+    /** Your data, the same in your account: every phone you sign in on, and your Google Drive. */
+    public final Sync sync;
     public volatile Session session;
     private volatile LinkedIn current;
 
@@ -50,6 +52,7 @@ public final class Engine {
         this.account = new Account(dataDir);
         this.reporter = new Reporter(this, account);
         this.copilot = new Copilot(this, dataDir);
+        this.sync = new Sync(this, dataDir);
         if (account.signedIn()) {
             reporter.ensureStarted();
         }

@@ -34,6 +34,16 @@ It prints the admin password and installs the timer that keeps the server up to 
 The keystore never goes in this repo (`.gitignore` keeps `*.jks` out). Keep a backup: every update must be signed
 with it.
 
+**3. Google Drive** (optional): make a Google Cloud OAuth client and paste it in the admin page (Settings > Google
+Drive). Steps: `server/README.md`, "Google Drive".
+
+## Your data and Google Drive
+
+Each user's CV, setup answers, "Your info", settings and jobs are kept in their account on the server: a new phone gets
+them when they sign in, and a change on one phone reaches the others within a couple of minutes (or right away with
+Sync now). When a user connects Google Drive (Settings > Your data), the server keeps an **Auto Apply** folder in their
+Drive the same, both ways: the CV, **My answers** and **My jobs** (Google Sheets). Edits there come back to the app.
+
 ## Deploy and update: automatic
 
 | What | How | What happens |

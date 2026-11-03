@@ -1,7 +1,7 @@
 # Auto Apply server
 
 The server behind the Auto Apply Android app (version 2.0 and later; 3.0 adds the activity feed, jobs people apply to
-themselves, the announcement and required updates).
+themselves, the announcement and required updates; 3.1 keeps each user's data and syncs it with their Google Drive).
 
 - **Accounts**: people sign up in the app with an email and a password.
 - **AI proxy**: the app sends its AI requests here; the server adds the OpenRouter key and the model you choose in the
@@ -13,6 +13,12 @@ themselves, the announcement and required updates).
     jobs added and marked applied, errors), live, for everyone or one user;
   - **App versions**: which build and version each user has, a message shown on everyone's Home screen, and the oldest
     version allowed (older apps show only an Update screen).
+- **Each user's data** (3.1): the CV file and its text, the setup answers, "Your info", settings and the job lists are
+  kept in the user's account, so every phone they sign in on has the same (`/v1/me/data`, `/v1/me/cv`). The admin page
+  shows how much each account holds (Details > Data in the account).
+- **Google Drive** (3.1, optional): a user connects their Drive in the app; the server keeps an **Auto Apply** folder in
+  it the same as their data, both ways: the CV file, **My answers** and **My jobs** (Google Sheets). What they edit there
+  comes back to the app. See "Google Drive" below.
 - **Google Play pages**: `/privacy` (privacy policy) and `/delete-account` (account deletion on the web).
 
 Python (FastAPI) with SQLite, in Docker. Caddy in front gets the HTTPS certificate by itself.
@@ -100,6 +106,33 @@ its user marked as applied (with the channel: auto, LinkedIn or a company site, 
 app reported since the account was created. "Today" uses the time zone in `TIMEZONE` (default
 Africa/Cairo).
 
+## Google Drive (one time, in Google Cloud)
+
+The server signs users in to Google with OAuth and the `drive.file` permission (it sees only the files it makes, not the
+rest of anyone's Drive). Make the OAuth client once:
+
+1. [console.cloud.google.com](https://console.cloud.google.com) → New project (for example "Auto Apply").
+2. APIs & Services → Library → turn on **Google Drive API** and **Google Sheets API**.
+3. Google Auth Platform → **Get started**: app name "Auto Apply", your email, Audience **External**, contact email →
+   Create.
+4. **Branding**: app home page `https://DOMAIN/`, privacy policy `https://DOMAIN/privacy`, authorized domain: the top
+   domain (for `145-241-153-177.sslip.io` it is `sslip.io`) → Save.
+5. **Data access** → Add or remove scopes → `https://www.googleapis.com/auth/drive.file` → Update → Save.
+6. **Clients** → Create client → **Web application** → Authorized redirect URI `https://DOMAIN/oauth/google/callback`
+   (the admin page shows it with a Copy button) → Create. Copy the **Client ID** and the **Client secret** right away
+   (the secret is shown once).
+7. **Audience** → **Publish app** (In production). In "Testing" Google ends every user's connection after 7 days and
+   only test users can connect. `drive.file` is not a sensitive scope, so publishing needs no Google review.
+8. Admin page → Settings → **Google Drive** → paste the Client ID and secret → Save.
+
+Users then connect from the app: Settings → Your data → **Connect Google Drive**. The server looks for edits in each
+Drive every 5 minutes (`DRIVE_CHECK_EVERY`), writes changes from the phones within seconds, and the app's **Sync now**
+does both at once. If a user removes the app's access in their Google account, their app asks them to connect again.
+
+The tokens are encrypted with AES-GCM; the key is `DATA_KEY` in `.env`, or a random one made on first start in
+`data.key` next to the database (in the `data` volume). Keep it with your database backups: without it users must
+connect Google Drive again.
+
 ## Updating the server
 
 GitHub Actions deploys every push to `server/` on `main` (top README). By hand, on the VM:
@@ -114,7 +147,7 @@ The database stays in the `data` Docker volume; new columns and tables are added
 
 ## Backups
 
-The whole state is one SQLite file in the `data` volume:
+The whole state is one SQLite file in the `data` volume (and `data.key`, which encrypts the Google sign-ins):
 
 ```bash
 docker compose exec app python -c "import sqlite3; s=sqlite3.connect('/data/autoapply.db'); d=sqlite3.connect('/data/backup.db'); s.backup(d)"
@@ -126,7 +159,10 @@ docker compose cp app:/data/backup.db ./autoapply-backup-$(date +%F).db
 - The admin page needs `ADMIN_PASSWORD` (it is off without one). Sign-in attempts are rate-limited; the session cookie
   is HttpOnly, Secure and SameSite=Strict, and lasts 12 hours.
 - Passwords are stored as scrypt hashes; app sign-in tokens are stored only as SHA-256 hashes.
-- The server keeps no request logs (`--no-access-log`). AI requests (CV text, questions) pass through and are not stored.
+- The server keeps no request logs (`--no-access-log`). AI requests pass through and are not stored. Each user's own
+  data (CV, answers, jobs) is stored for them, and deleted with their account.
+- Google Drive: OAuth with PKCE, one-time state, the `drive.file` scope only; refresh tokens encrypted at rest. Sheets are
+  written as plain text (a cell is never read as a formula).
 - Only Caddy is published (ports 80/443). The app container is reachable only inside the Docker network.
 - Keep `.env` private; it holds the admin password.
 
@@ -143,13 +179,22 @@ App, with `Authorization: Bearer <token>`:
 | POST | `/v1/me/delete` | `{password}`: deletes the account and its data |
 | POST | `/v1/ai/chat` | `{messages, max_tokens, temperature, purpose}` → OpenRouter's answer |
 | POST | `/v1/report` | `{start, running, mode, message, events: [...]}` → `{stop, reason, pro, max_per_day}` |
+| GET | `/v1/me/data?since=REV` | what changed since that revision: `{rev, records: [{k, id, d, rev, t}], more}` (deleted: `d` null) |
+| POST | `/v1/me/data` | `{now, changes: [{k, id, d, base, t}]}` → `{rev, results: [{status: saved, same or conflict}]}` |
+| GET / POST | `/v1/me/cv` | the CV file `{name, data (base64), text, sha256, rev}`; POST `{name, data, text, base, t}` |
+| GET | `/v1/me/drive` | Google Drive: `{available, connected, email, folder_url, files, synced_at, error, reconnect}` |
+| POST | `/v1/me/drive/link`, `/sync`, `/unlink` | the Google page to open; sync now; disconnect |
 | GET | `/v1/config` | `{app_name, contact_email, signups_open}` |
+
+A change to an item that also changed on the server since the phone's `base` revision is kept only when it is the newer
+one (times are moved to the server's clock with the phone's `now`); otherwise the answer carries the server's item.
 
 ## Tests
 
 ```bash
 pip install -r requirements.txt
 python3 tests/test_server.py
+python3 tests/test_data.py      # each user's data and Google Drive, with a fake Google (tests/fake_google.py)
 ```
 
 The admin page's font is Figtree (SIL Open Font License, `app/static/FIGTREE-OFL.txt`).

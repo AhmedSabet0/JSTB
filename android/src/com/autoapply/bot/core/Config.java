@@ -142,6 +142,30 @@ public final class Config {
         return null;
     }
 
+    /** Keeps a CV file and the text read from it (chosen on this phone, or from your account). */
+    public File saveCv(String name, byte[] raw, String text) {
+        String ext = name.toLowerCase(Locale.ROOT).endsWith(".txt") ? ".txt" : ".pdf";
+        for (String old : new String[]{"cv.pdf", "cv.txt"}) {
+            new File(dir, old).delete();
+        }
+        File dest = new File(dir, "cv" + ext);
+        Util.writeBytes(dest, raw);
+        Util.writeText(cvTextFile, text);
+        set("CV_FILE", dest.getName());
+        set("CV_NAME", name.replaceAll("[\\\\/:*?\"<>|]", "_"));
+        return dest;
+    }
+
+    /** Signed in with another account: this CV belonged to the one before. */
+    public void clearCv() {
+        for (String old : new String[]{"cv.pdf", "cv.txt"}) {
+            new File(dir, old).delete();
+        }
+        cvTextFile.delete();
+        set("CV_FILE", "");
+        set("CV_NAME", "");
+    }
+
     public String cvText() {
         String t = Util.readText(cvTextFile);
         return t == null ? "" : t;

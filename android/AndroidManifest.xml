@@ -2,7 +2,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="com.autoapply.bot"
     android:versionCode="7"
-    android:versionName="3.0">
+    android:versionName="3.1">
 
     <uses-sdk android:minSdkVersion="24" android:targetSdkVersion="36" />
 
@@ -51,6 +51,13 @@
                 <action android:name="android.intent.action.SEND" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:mimeType="text/plain" />
+            </intent-filter>
+            <!-- "Back to Auto Apply" on the page after connecting Google Drive (autoapply://drive). -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="autoapply" android:host="drive" />
             </intent-filter>
         </activity>
 

@@ -113,6 +113,11 @@ public final class Account {
         return !token().isEmpty();
     }
 
+    /** The account's ID on the server ("" before the first answer from it). */
+    public synchronized String userId() {
+        return Json.str(Json.map(data.get("user")), "id");
+    }
+
     public synchronized boolean pro() {
         return Json.bool(Json.map(data.get("user")), "pro");
     }

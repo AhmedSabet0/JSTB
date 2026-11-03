@@ -83,18 +83,24 @@ Check them against your final setup before you submit.
 - Do you provide a way for users to request that their data is deleted? **Yes** > `https://DOMAIN/delete-account`
   (and Settings > Account > Delete account in the app)
 - Shared with third parties: **none**. OpenRouter processes AI requests on your behalf (a service provider), which Play
-  does not count as sharing.
+  does not count as sharing. Google Drive (when a user connects it) is the user's own storage, chosen by them.
+
+Since 3.1 the server keeps each user's data so every phone they sign in on has it (and their Google Drive, if they
+connect it): the CV file and its text, the setup answers and "Your info", settings, and the job lists. That is why the
+rows below say "not ephemeral" and Files and docs is collected.
 
 | Data type | Collected | Optional? | Ephemeral? | Purposes |
 |---|---|---|---|---|
 | Personal info > Name | Yes | Optional | No | Account management |
 | Personal info > Email address | Yes | Required | No | Account management |
 | Personal info > User IDs | Yes (account ID) | Required | No | Account management |
-| Personal info > Phone number, Address (city), Other info (work history, education, salary expectations from the CV and your answers) | Yes, sent to the AI to answer forms and write cover letters | Required | **Yes** | App functionality |
-| App activity > App interactions (jobs added and applied to: title, company, link, stage; the app's activity lines) | Yes | Required | No | App functionality, Analytics |
+| Personal info > Phone number, Address (city), Other info (work history, education, salary expectations from the CV and your answers) | Yes: kept in the account (synced to the user's phones and Drive) and sent to the AI to answer forms and write cover letters | Required | No | App functionality, Account management |
+| Files and docs (the CV file) | Yes: kept in the account so every phone has it, and copied to the user's Google Drive when they connect it | Required | No | App functionality |
+| App activity > App interactions (jobs added and applied to: title, company, link, stage, notes; the app's activity lines) | Yes | Required | No | App functionality, Analytics |
 
-Not collected: location, contacts, photos, files (the CV file stays on the phone; only its text goes to the AI, and
-the file goes to a website only when you attach it there), device IDs, crash logs, financial info.
+Not collected: location, contacts, photos, device IDs, crash logs, financial info. The Google sign-in for Drive is the
+user's choice (Settings > Your data > Connect Google Drive); the app gets the drive.file permission only (the files it
+makes), and the server keeps that sign-in encrypted.
 
 ## 7. Store listing (Grow > Store presence > Main store listing)
 

@@ -43,6 +43,17 @@ public class TestServer {
         env.put("OPENROUTER_MODEL", "openai/gpt-4o-mini");
         env.put("CONTACT_EMAIL", "help@example.com");
         env.put("JAVA_TOOL_OPTIONS", "");
+        String google = System.getProperty("google", "");   // a fake Google (UI tests of Google Drive)
+        if (!google.isEmpty()) {
+            env.put("PUBLIC_URL", base);
+            env.put("GOOGLE_AUTH_URL", google + "/auth");
+            env.put("GOOGLE_TOKEN_URL", google + "/oauth2/token");
+            env.put("GOOGLE_REVOKE_URL", google + "/oauth2/revoke");
+            env.put("GOOGLE_DRIVE_URL", google + "/drive/v3");
+            env.put("GOOGLE_UPLOAD_URL", google + "/upload/drive/v3");
+            env.put("GOOGLE_SHEETS_URL", google + "/v4/spreadsheets");
+            env.put("DRIVE_CHECK_EVERY", "20");
+        }
         pb.redirectErrorStream(true);
         pb.redirectOutput(new File(scratch, "srv_test.log"));
         proc = pb.start();

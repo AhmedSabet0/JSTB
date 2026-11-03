@@ -5,7 +5,7 @@ import os
 APP_NAME = os.environ.get("APP_NAME", "Auto Apply")
 OPERATOR = os.environ.get("OPERATOR_NAME", "") or APP_NAME
 CONTACT = os.environ.get("CONTACT_EMAIL", "")
-POLICY_DATE = os.environ.get("POLICY_DATE", "November 2, 2026")
+POLICY_DATE = os.environ.get("POLICY_DATE", "November 3, 2026")
 
 e = html.escape
 
@@ -27,6 +27,8 @@ input{width:100%;font:inherit;padding:12px 14px;border:1px solid var(--line);bor
 button{margin-top:18px;font:inherit;font-weight:700;padding:12px 20px;border:0;border-radius:12px;background:var(--error);color:#fff;cursor:pointer}
 .ok{color:var(--good);font-weight:700}.bad{color:var(--error);font-weight:700}
 .links{display:flex;gap:18px;flex-wrap:wrap;margin-top:18px}
+.btn{display:inline-block;margin-top:18px;font-weight:700;padding:12px 20px;border-radius:12px;background:var(--action);
+color:var(--action-ink);text-decoration:none}
 """
 
 LOGO = ('<svg viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="16"/>'
@@ -45,7 +47,9 @@ def contact_line():
 
 def home():
     return page(APP_NAME, f"""<div class="card"><h1>{e(APP_NAME)}</h1>
-<p class="muted">An Android app that applies to LinkedIn Easy Apply jobs that fit your CV, at a pace you set.</p>
+<p class="muted">An Android app that helps you apply to jobs that fit your CV: it keeps your answers ready, fills
+application forms, tracks every application, and (in its GitHub version) applies to LinkedIn Easy Apply jobs at a pace you
+set. Your CV, answers and jobs are the same on every phone you sign in on, and in your Google Drive if you connect it.</p>
 <p class="muted">{e(APP_NAME)} is not affiliated with, endorsed by or sponsored by LinkedIn.</p>
 <div class="links"><a href="/privacy">Privacy policy</a><a href="/delete-account">Delete your account</a></div></div>""")
 
@@ -56,14 +60,16 @@ def privacy():
 <p>This policy explains what the {e(APP_NAME)} Android app and its server collect, why, and what you can do about it.
 The service is run by {e(OPERATOR)}. Questions: {contact_line()}.</p>
 
-<h2>What stays on your phone</h2>
-<ul><li>Your CV file, the answers you save ("Your info"), your settings and the list of jobs the app handled.</li>
-<li>Your LinkedIn sign-in. You sign in on LinkedIn's own page inside the app. We never receive your LinkedIn password,
-and the LinkedIn session (cookies) stays on your phone.</li></ul>
-<p>Uninstalling the app removes all of it.</p>
+<h2>What stays on your phone only</h2>
+<ul><li>Your LinkedIn sign-in. You sign in on LinkedIn's own page inside the app. We never receive your LinkedIn password,
+and the LinkedIn session (cookies) stays on your phone.</li>
+<li>The app's update downloads, its pacing state and its debug files.</li></ul>
 
 <h2>What our server keeps</h2>
 <ul><li><b>Your account:</b> name, email address and password. The password is stored only as a salted scrypt hash.</li>
+<li><b>Your data, so it is the same on every phone you sign in on:</b> your CV file and its text, the answers you save
+(the setup answers and "Your info"), your settings and job titles, the notes for the AI, the jobs you saved to apply to
+and the jobs the app handled, with their stage and notes. Your phone keeps its own copy too.</li>
 <li><b>Activity the app reports:</b> whether auto apply is running, its status, the app version and phone model, and for
 each job it applied to (or could not finish): the LinkedIn job ID, job title, company name, result, match score and time.
 This lets us show you and the service admin how many applications were sent, and lets the admin stop auto apply.</li>
@@ -83,17 +89,34 @@ notes, the job description and the form's questions. These go through our server
 forwards them to the AI model provider that produces the answer. Our server does not store this content. OpenRouter's
 privacy policy and the model provider's terms apply to it.</p>
 
+<h2>Google Drive (only if you connect it)</h2>
+<p>When you connect Google Drive in the app, our server makes a folder named "Auto Apply" in your Drive with a copy of
+your CV, a "My answers" sheet and a "My jobs" sheet, keeps them up to date, and reads the changes you make to those
+files so they come back to the app. It uses Google's <i>drive.file</i> permission: it can see and change only the files
+it made (or that you open with it), not the rest of your Drive. It also reads your Google account's email address to
+show which account is connected. The Google sign-in tokens are stored encrypted on our server and are used for nothing
+else.</p>
+<p>You can disconnect at any time in the app (Settings &rarr; Google Drive &rarr; Disconnect) or at
+<a href="https://myaccount.google.com/permissions">myaccount.google.com/permissions</a>. The files stay in your Drive;
+they are yours to keep or delete.</p>
+<p>{e(APP_NAME)}'s use and transfer of information received from Google APIs adheres to the
+<a href="https://developers.google.com/terms/api-services-user-data-policy">Google API Services User Data Policy</a>,
+including the Limited Use requirements.</p>
+
 <h2>What we do not do</h2>
 <ul><li>We do not sell your data or share it with advertisers.</li><li>The app has no ads and no third-party analytics.
-</li><li>We share data only with OpenRouter, as described above, or when the law requires it.</li></ul>
+</li><li>We share data only with OpenRouter and with your own Google Drive (when you connect it), as described above, or
+when the law requires it.</li></ul>
 
 <h2>How long we keep it</h2>
-<p>Account, activity and usage records are kept while your account exists. When you delete your account they are
-deleted from the server right away.</p>
+<p>Your account, your data, activity and usage records are kept while your account exists. When you delete your
+account they are deleted from the server right away. Deleting a fact, a job or your CV in the app deletes it from the
+server too.</p>
 
 <h2>Deleting your account</h2>
 <p>In the app: Settings &rarr; Account &rarr; Delete account. Or on the web: <a href="/delete-account">delete your
-account</a>. Both delete your account, your reported activity and your AI usage records. If you can no longer sign in,
+account</a>. Both delete your account, your CV, answers, settings and jobs kept on the server, your reported activity
+and your AI usage records, and disconnect Google Drive (the files in your Drive stay yours). If you can no longer sign in,
 email {contact_line()} from your account's email address and we will delete it within 7 days.</p>
 
 <h2>Security</h2>
@@ -118,9 +141,10 @@ def delete_form(message="", ok=False):
         return page(f"Account deleted - {APP_NAME}", f'<div class="card"><h1>Account deleted</h1>{note}'
                     f'<p class="muted">Data on your phone is removed when you uninstall the app.</p></div>')
     return page(f"Delete your account - {APP_NAME}", f"""<div class="card"><h1>Delete your {e(APP_NAME)} account</h1>
-<p class="muted">This deletes your account, the activity the app reported (jobs applied to, results) and your AI usage
-records from our server, right away. It cannot be undone. Data on your phone (your CV, answers and LinkedIn sign-in) is
-removed when you uninstall the app, or from the app with Settings &rarr; Account &rarr; Delete account.</p>
+<p class="muted">This deletes your account and everything our server keeps for it, right away: your CV, answers,
+settings and jobs, the activity the app reported and your AI usage records. It also disconnects Google Drive (the files
+in your Drive stay yours). It cannot be undone. The copy on your phone (and your LinkedIn sign-in) is removed when you
+uninstall the app.</p>
 {note}
 <form method="post" action="/delete-account" autocomplete="off">
 <label for="email">Email of your account</label><input id="email" name="email" type="email" required>
@@ -128,3 +152,16 @@ removed when you uninstall the app, or from the app with Settings &rarr; Account
 <button type="submit">Delete my account</button></form>
 <p class="muted">Forgot your password? Email {contact_line()} from your account's email address and we will delete the
 account within 7 days.</p></div>""")
+
+
+def drive_result(ok, text):
+    """The page Google sends the browser back to, after connecting Google Drive."""
+    back = '<a class="btn" href="autoapply://drive">Back to Auto Apply</a>'
+    if ok:
+        who = f" as <b>{e(text)}</b>" if text else ""
+        return page(f"Google Drive connected - {APP_NAME}", f"""<div class="card"><h1>Google Drive is connected</h1>
+<p class="ok">Connected{who}.</p>
+<p>Your <b>Auto Apply</b> folder is being made in your Drive: your CV, <b>My answers</b> and <b>My jobs</b>. What you change
+there comes back to the app.</p><p class="muted">You can close this page and go back to the app.</p>{back}</div>""")
+    return page(f"Google Drive not connected - {APP_NAME}", f"""<div class="card"><h1>Google Drive is not connected</h1>
+<p class="bad">{e(text)}</p><p class="muted">Go back to the app and try again.</p>{back}</div>""")

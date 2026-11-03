@@ -146,8 +146,8 @@ public class UiServer {
         Util.writeText(new File(data, "config.json"), Json.pretty(Json.obj("KEYWORDS", "", "PAGES_PER_KEYWORD", "1")));
         com.autoapply.bot.core.Account.flavor = P.FLAVOR;
         com.autoapply.bot.core.Account.versionCode = Long.getLong("versionCode", 1L);
-        Engine engine = new Engine(new P(), data);
-        Api api = new Api(engine);
+        final Engine[] engine = {new Engine(new P(), data)};
+        final Api[] api = {new Api(engine[0])};
         File ui = new File(System.getProperty("assets"), "ui");
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/", (HttpExchange ex) -> {
@@ -159,8 +159,14 @@ public class UiServer {
                 String body = ex.getRequestMethod().equals("POST")
                         ? new String(ex.getRequestBody().readAllBytes(), "UTF-8") : null;
                 String q = ex.getRequestURI().getRawQuery();
-                out = api.handle(path + (q == null ? "" : "?" + q), body == null || body.isEmpty() ? (ex.getRequestMethod().equals("POST") ? "{}" : null) : body)
+                out = api[0].handle(path + (q == null ? "" : "?" + q), body == null || body.isEmpty() ? (ex.getRequestMethod().equals("POST") ? "{}" : null) : body)
                         .getBytes("UTF-8");
+            } else if (path.equals("/__newphone")) {   // the same app on a new phone: nothing on it yet
+                File d2 = new File(scratch, "jrun_ui_phone" + System.nanoTime());
+                d2.mkdirs();
+                engine[0] = new Engine(new P(), d2);
+                api[0] = new Api(engine[0]);
+                out = Json.stringify(Json.obj("ok", true, "data", d2.getPath())).getBytes("UTF-8");
             } else if (path.equals("/__events")) {
                 out = Json.stringify(new ArrayList<>(EVENTS)).getBytes("UTF-8");
             } else if (path.startsWith("/ui/")) {

@@ -71,6 +71,26 @@ public final class Profile {
         return cur;
     }
 
+    /** Answers from your account (another phone, Google Drive), cleaned the same way; done as it was there. */
+    public synchronized void merge(Map<String, Object> values) {
+        Map<String, Object> cur = load();
+        for (String f : FIELDS) {
+            if (values.containsKey(f)) {
+                cur.put(f, clean(f, values.get(f) == null ? "" : String.valueOf(values.get(f))));
+            }
+        }
+        if (values.containsKey("done")) {
+            Object d = values.get("done");
+            cur.put("done", Boolean.TRUE.equals(d) || "1".equals(String.valueOf(d)) || "true".equals(String.valueOf(d)));
+        }
+        Util.writeText(file, Json.pretty(cur));
+    }
+
+    /** Signed in with another account: these answers belonged to the one before. */
+    public synchronized void clear() {
+        file.delete();
+    }
+
     static String clean(String field, String raw) {
         String v = raw.replace('\n', ' ').trim();
         if (field.equals("current_salary") || field.equals("expected_salary") || field.equals("notice_days")

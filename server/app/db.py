@@ -1,4 +1,5 @@
-"""SQLite storage: users, sign-in tokens, reported applications, AI usage, settings and admin sessions."""
+"""SQLite storage: users, sign-in tokens, reported applications, AI usage, settings, admin sessions, each user's data
+(records and the CV file) and their Google Drive link."""
 import os
 import sqlite3
 import threading
@@ -66,6 +67,53 @@ CREATE TABLE IF NOT EXISTS events (
 CREATE INDEX IF NOT EXISTS events_user ON events(user_id, id);
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS admin_sessions (token_hash TEXT PRIMARY KEY, expires_at REAL NOT NULL);
+-- Each user's data, the same on every phone of theirs and in their Google Drive: setup answers, settings, your info,
+-- jobs, the CV's text. One row per item; rev grows with every change (per user), deleted items keep a row (data NULL).
+CREATE TABLE IF NOT EXISTS records (
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL,
+  rid TEXT NOT NULL,
+  data TEXT,
+  rev INTEGER NOT NULL,
+  mtime REAL NOT NULL,
+  origin TEXT NOT NULL DEFAULT '',
+  PRIMARY KEY (user_id, kind, rid)
+);
+CREATE INDEX IF NOT EXISTS records_rev ON records(user_id, rev);
+-- The CV file itself.
+CREATE TABLE IF NOT EXISTS user_files (
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  file_name TEXT NOT NULL,
+  mime TEXT NOT NULL,
+  sha256 TEXT NOT NULL,
+  size INTEGER NOT NULL,
+  data BLOB NOT NULL,
+  at REAL NOT NULL,
+  PRIMARY KEY (user_id, name)
+);
+-- A user's Google Drive: the (encrypted) tokens, the Auto Apply folder and its files, what was synced last.
+CREATE TABLE IF NOT EXISTS drive_links (
+  user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  email TEXT NOT NULL DEFAULT '',
+  refresh_token TEXT NOT NULL,
+  access_token TEXT NOT NULL DEFAULT '',
+  access_until REAL NOT NULL DEFAULT 0,
+  folder_id TEXT NOT NULL DEFAULT '',
+  state TEXT NOT NULL DEFAULT '{}',
+  linked_at REAL NOT NULL,
+  synced_at REAL,
+  checked_at REAL,
+  pushed_rev INTEGER NOT NULL DEFAULT -1,
+  error TEXT NOT NULL DEFAULT '',
+  error_code TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS oauth_states (
+  state_hash TEXT PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  verifier TEXT NOT NULL,
+  expires_at REAL NOT NULL
+);
 """
 
 # Settings the admin page changes. Values are stored as text.
@@ -82,6 +130,8 @@ DEFAULTS = {
     "min_version_github": "0",   # versionCode below this must update first
     "min_version_play": "0",
     "play_url": "https://play.google.com/store/apps/details?id=com.autoapply.bot",
+    "google_client_id": "",      # Google Drive sync: the OAuth client made in Google Cloud (see README)
+    "google_client_secret": "",
 }
 
 # Columns added after 2.0, added to existing databases on start.
@@ -94,6 +144,8 @@ MIGRATIONS = [
     ("applications", "stage", "TEXT NOT NULL DEFAULT ''"),
     ("applications", "reason", "TEXT NOT NULL DEFAULT ''"),
     ("applications", "url", "TEXT NOT NULL DEFAULT ''"),
+    ("users", "data_rev", "INTEGER NOT NULL DEFAULT 0"),
+    ("users", "data_at", "REAL"),
 ]
 
 _local = threading.local()
@@ -149,6 +201,7 @@ def init():
                 if not row or not row["value"] or row["value"] == DEFAULTS[key]:
                     t.execute("UPDATE settings SET value = ? WHERE key = ?", (val, key))
         t.execute("DELETE FROM admin_sessions WHERE expires_at < ?", (time.time(),))
+        t.execute("DELETE FROM oauth_states WHERE expires_at < ?", (time.time(),))
 
 
 def one(sql, args=()):

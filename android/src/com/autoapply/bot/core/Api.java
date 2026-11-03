@@ -14,6 +14,11 @@ public final class Api {
         "PAGES_PER_KEYWORD", "SEARCH_EVERY_MIN", "PER_HOUR", "PER_DAY", "MIN_SCORE", "SKIP_COMPANIES", "SKIP_TITLE_WORDS",
         "NEW_QUESTIONS", "ASK_TIMEOUT_MIN", "UPDATE_SOURCE", "DAILY_GOAL", "AUTO_UPDATE"};
 
+    /** Requests that change your data (it then goes to your account). */
+    static final java.util.Set<String> CHANGES = new java.util.HashSet<String>(java.util.Arrays.asList("/api/settings",
+            "/api/cv", "/api/profile", "/api/facts", "/api/setup", "/api/answers", "/api/answer", "/api/open-questions",
+            "/api/ask-mode", "/api/tracker/stage"));
+
     private final Engine engine;
     private final java.io.File updateFile;
     private final java.io.File suggestFile;
@@ -39,9 +44,15 @@ public final class Api {
                 query = path.substring(qi + 1);
             }
             Map<String, Object> b = body == null ? null : Json.map(Json.tryParse(body));
+            if (!query.contains("bg=1")) {
+                engine.sync.touch();        // the app is open: sync every so often
+            }
             Object out = b == null ? get(p, query) : post(p, b);
             if (out == null) {
                 return Json.stringify(Json.obj("ok", false, "error", "Unknown request " + p));
+            }
+            if (b != null && (CHANGES.contains(p) || (p.startsWith("/api/copilot/") && !p.endsWith("/open")))) {
+                engine.sync.changed();      // your account gets it in a moment
             }
             return Json.stringify(out);
         } catch (IllegalArgumentException e) {
@@ -95,6 +106,9 @@ public final class Api {
         if (p.equals("/api/tracker")) {
             return tracker();
         }
+        if (p.equals("/api/sync")) {
+            return Json.obj("ok", true, "sync", engine.sync.status(), "drive", engine.sync.drive(query.contains("fresh=1")));
+        }
         if (p.equals("/api/open-questions")) {
             List<Map<String, Object>> items = engine.waiting.all();
             Collections.sort(items, new Comparator<Map<String, Object>>() {
@@ -143,6 +157,7 @@ public final class Api {
                 "build", engine.platform.buildInfo(),
                 "auto_apply", autoApply(),
                 "copilot", engine.copilot.stats(Util.now()),
+                "sync", engine.sync.status(),
                 "platform", "android");
     }
 
@@ -400,6 +415,19 @@ public final class Api {
         if (p.startsWith("/api/copilot/")) {
             return copilot(p.substring("/api/copilot/".length()), b);
         }
+        if (p.equals("/api/sync/now")) {
+            if (!engine.account.signedIn()) {
+                throw new IllegalArgumentException("Sign in to your account first.");
+            }
+            Map<String, Object> st = engine.sync.runNow();
+            if (!Json.str(st, "error").isEmpty()) {
+                throw new IllegalArgumentException(Json.str(st, "error"));
+            }
+            return Json.obj("ok", true, "sync", st, "setup", setupStatus(engine.config.load()));
+        }
+        if (p.startsWith("/api/drive/")) {
+            return drive(p.substring("/api/drive/".length()), b);
+        }
         if (p.equals("/api/fill")) {
             Map<String, Object> item = Json.str(b, "id").isEmpty() ? null : engine.copilot.get(Json.str(b, "id"));
             String title = item != null ? Json.str(item, "title") : Json.str(b, "title");
@@ -602,14 +630,7 @@ public final class Api {
             throw new IllegalArgumentException("Could not read text from " + name + " (it may be a scanned image). Export your CV "
                     + "as a text-based PDF, or upload it as a .txt file.");
         }
-        for (String old : new String[]{"cv.pdf", "cv.txt"}) {
-            new File(engine.config.dir, old).delete();
-        }
-        File dest = new File(engine.config.dir, "cv" + ext);
-        Util.writeBytes(dest, raw);
-        Util.writeText(engine.config.cvTextFile, text);
-        engine.config.set("CV_FILE", dest.getName());
-        engine.config.set("CV_NAME", name.replaceAll("[\\\\/:*?\"<>|]", "_"));
+        engine.config.saveCv(name, raw, text);
         return Json.obj("ok", true, "name", name, "chars", text.length(), "preview", Util.cut(text, 600));
     }
 
@@ -662,6 +683,7 @@ public final class Api {
                 Map<String, Object> info = what.equals("signup") ? acc.signUp(email, password, Json.str(b, "name").trim())
                         : acc.signIn(email, password);
                 Util.log(what.equals("signup") ? "Created your account (" + email + ")." : "Signed in as " + email + ".");
+                engine.sync.kick(2);
                 return Json.obj("ok", true, "account", info);
             }
             if (what.equals("refresh")) {
@@ -672,6 +694,7 @@ public final class Api {
                 if (engine.running()) {
                     throw new IllegalArgumentException("Stop auto apply first.");
                 }
+                engine.sync.flush();        // what is still waiting goes to your account first
                 acc.signOut();
                 return Json.obj("ok", true, "account", acc.info());
             }
@@ -680,6 +703,7 @@ public final class Api {
                     throw new IllegalArgumentException("Stop auto apply first.");
                 }
                 acc.delete(Json.str(b, "password"));
+                engine.sync.forget();
                 Util.log("Your account was deleted from the server.");
                 return Json.obj("ok", true, "account", acc.info());
             }
@@ -691,6 +715,53 @@ public final class Api {
             throw new IllegalArgumentException("Could not reach the server. Check the internet connection and try again.");
         }
         throw new IllegalArgumentException("Unknown account request: " + what);
+    }
+
+    // ------------------------------------------------------------------ Google Drive (through the server)
+    private Object drive(String what, Map<String, Object> b) {
+        Account acc = engine.account;
+        if (!acc.signedIn()) {
+            throw new IllegalArgumentException("Sign in to your account first.");
+        }
+        try {
+            if (what.equals("connect")) {
+                Map<String, Object> r = acc.call("POST", "/v1/me/drive/link", Json.obj(), true);
+                engine.platform.openLink(Json.str(r, "url"), "browser", "", "");
+                Util.log("Opened Google to connect your Drive");
+                return Json.obj("ok", true);
+            }
+            if (what.equals("sync")) {   // yours to the server, the server with your Drive, then back to this phone
+                engine.sync.flush();
+                Map<String, Object> d = Json.map(acc.call("POST", "/v1/me/drive/sync", Json.obj(), true).get("drive"));
+                engine.sync.driveChanged(d);
+                Map<String, Object> st = engine.sync.runNow();
+                return Json.obj("ok", true, "drive", d, "sync", st);
+            }
+            if (what.equals("disconnect")) {
+                Map<String, Object> d = Json.map(acc.call("POST", "/v1/me/drive/unlink", Json.obj(), true).get("drive"));
+                engine.sync.driveChanged(d);
+                Util.log("Disconnected Google Drive (the files stay in your Drive)");
+                return Json.obj("ok", true, "drive", d);
+            }
+            if (what.equals("open")) {
+                Map<String, Object> d = engine.sync.drive(false);
+                String which = Json.str(b, "which");
+                String url = d == null ? "" : which.equals("folder") ? Json.str(d, "folder_url") : Json.str(Json.map(d.get("files")), which);
+                if (!url.startsWith("https://")) {
+                    throw new IllegalArgumentException("Your Drive folder is not ready yet. Tap Sync now.");
+                }
+                engine.platform.openLink(url, "browser", "", "");
+                return Json.obj("ok", true);
+            }
+        } catch (Account.AuthError e) {
+            throw new IllegalArgumentException(e.getMessage());
+        } catch (Account.ServerError e) {
+            throw new IllegalArgumentException(e.status == 404 ? "The server does not have Google Drive yet (it updates by itself soon)."
+                    : e.getMessage());
+        } catch (Account.NetError e) {
+            throw new IllegalArgumentException("Could not reach the server. Check the internet connection and try again.");
+        }
+        throw new IllegalArgumentException("Unknown request: " + what);
     }
 
     /** You answered a waiting question: save it and let the jobs that waited for it run again. */

@@ -158,6 +158,23 @@
           <button class="btn primary" type="submit">Save</button>
         </form>
 
+        <form class="card" id="f-google" autocomplete="off">
+          <h2>Google Drive</h2>
+          <p class="hint">Lets each user keep their CV, answers and jobs in an <b>Auto Apply</b> folder in their own Google Drive,
+            both ways. Make a Google Cloud OAuth client (README &rarr; Google Drive) and paste it here.</p>
+          <label>Authorized redirect URI (paste it in the Google client)</label>
+          <div class="link-row"><code id="g-redirect"></code><button class="btn" data-copy="g-redirect" type="button">Copy</button></div>
+          <label for="g-id">Client ID</label>
+          <input id="g-id" type="text" spellcheck="false" placeholder="1234567890-abc.apps.googleusercontent.com">
+          <label for="g-secret">Client secret</label>
+          <input id="g-secret" type="password" spellcheck="false" placeholder="GOCSPX-…">
+          <p id="g-state" class="hint"></p>
+          <div class="row">
+            <button class="btn primary" type="submit">Save</button>
+            <button id="btn-clear-google" class="btn ghost" type="button">Remove</button>
+          </div>
+        </form>
+
         <div class="card">
           <h2>Links for Google Play</h2>
           <p class="hint">Paste these in Play Console: App content &rarr; Privacy policy, and Data safety &rarr; Data deletion.</p>
@@ -185,6 +202,9 @@
         <button id="d-stop" class="btn stop" type="button">Stop now</button>
       </div>
       <dl id="d-facts" class="facts"></dl>
+
+      <h3>Data in the account</h3>
+      <dl id="d-data" class="facts"></dl>
 
       <h3>Live activity</h3>
       <ol id="d-feed" class="feed small-feed"></ol>
@@ -214,7 +234,7 @@
       <button id="d-revoke" class="btn" type="button">Sign out everywhere</button>
 
       <h3 class="danger-title">Delete user</h3>
-      <p class="hint">Deletes the account and everything the app reported for it.</p>
+      <p class="hint">Deletes the account and everything the server keeps for it (CV, answers, jobs, activity), and disconnects their Google Drive.</p>
       <button id="d-del" class="btn danger" type="button">Delete this user</button>
       <div id="d-del-confirm" class="confirm" hidden>
         <span>Delete <b id="d-del-email"></b> for good?</span>

@@ -346,6 +346,7 @@
       const r = await api(`/admin/api/users/${id}`);
       if (openId !== id) return;
       fillDrawer(r.user, quiet);
+      renderData(r.data);
       renderApps(r.applications);
       const a = await api(`/admin/api/activity?user=${id}&after=${drawerAfter}&limit=150`);
       if (openId !== id) return;
@@ -386,6 +387,23 @@
       $('d-cap').value = u.max_per_day == null ? '' : u.max_per_day;
       $('d-caph').value = u.max_per_hour == null ? '' : u.max_per_hour;
     }
+  }
+
+  function renderData(d) {
+    if (!d) return;
+    const n = d.counts || {};
+    const g = d.drive || {};
+    const kb = (b) => (b >= 1048576 ? `${(b / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(b / 1024))} KB`);
+    const drive = !g.connected ? 'Not connected'
+      : `${esc(g.email || 'Connected')}${g.error ? ` <span class="bad-text">· ${esc(g.error)}</span>`
+        : g.synced_at ? ` <span class="muted">· synced ${ago(g.synced_at)}</span>` : ' <span class="muted">· setting up</span>'}`;
+    const rows = [
+      ['CV', d.cv ? `${esc(d.cv.name)} <span class="muted">· ${kb(d.cv.size)} · ${when(d.cv.at)}</span>` : 'none yet'],
+      ['Setup answers', fmtNum(n.profile || 0)], ['Your info', `${fmtNum(n.facts || 0)} facts`],
+      ['Jobs to apply / applied by hand', fmtNum(n.copilot || 0)], ['Auto apply job log', fmtNum(n.jobs || 0)],
+      ['Last change', d.at ? when(d.at) : '—'], ['Google Drive', drive],
+    ];
+    $('d-data').innerHTML = rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('');
   }
 
   function renderApps(apps) {
@@ -471,6 +489,14 @@
       : '<li class="muted">No app has reported yet.</li>';
     $('s-signups').checked = !!s.signups_open;
     $('s-autopro').checked = !!s.new_users_pro;
+    $('g-redirect').textContent = s.google_redirect || `${location.origin}/oauth/google/callback`;
+    if (document.activeElement !== $('g-id')) $('g-id').value = s.google_client_id || '';
+    $('g-secret').value = '';
+    $('g-secret').placeholder = s.has_google_secret ? 'Saved. Paste a new one to replace it' : 'GOCSPX-…';
+    const users = (data.totals && data.totals.drive) || 0;
+    $('g-state').innerHTML = s.google_ready ? `<span class="ok-text">Ready</span> · ${users} user${users === 1 ? '' : 's'} connected`
+      : (s.public_url ? '<span class="bad-text">Not set up yet</span>' : '<span class="bad-text">PUBLIC_URL is not set on the server</span>');
+    $('btn-clear-google').hidden = !s.google_client_id && !s.has_google_secret;
   }
   async function saveSettings(body, msg) {
     try {
@@ -516,6 +542,18 @@
     saveSettings({ announcement: $('s-announce').value.trim(), min_version_github: $('s-minv-github').value || 0,
       min_version_play: $('s-minv-play').value || 0, play_url: $('s-playurl').value.trim() },
     'Saved. Apps pick it up from their next check.');
+  });
+  $('f-google').addEventListener('submit', (ev) => {
+    ev.preventDefault();
+    const body = { google_client_id: $('g-id').value.trim() };
+    if ($('g-secret').value.trim()) body.google_client_secret = $('g-secret').value.trim();
+    saveSettings(body, 'Saved. Users can connect Google Drive from the app (Settings > Google Drive).');
+  });
+  $('btn-clear-google').addEventListener('click', () => {
+    // eslint-disable-next-line no-alert
+    if (window.confirm('Remove the Google client? Google Drive stops syncing for every user until you add one again.')) {
+      saveSettings({ clear_google: true }, 'Google client removed.');
+    }
   });
   $('f-accounts').addEventListener('submit', (ev) => {
     ev.preventDefault();

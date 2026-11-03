@@ -302,6 +302,12 @@ public final class MainActivity extends Activity {
     private volatile String pendingShare = "";
 
     private void handle(Intent intent) {
+        if (intent != null && Intent.ACTION_VIEW.equals(intent.getAction()) && intent.getData() != null
+                && "autoapply".equals(intent.getData().getScheme())) {
+            intent.setAction(null);  // back from connecting Google Drive: onResume tells the screens
+            closePanes();
+            return;
+        }
         if (intent != null && Intent.ACTION_SEND.equals(intent.getAction())) {
             final String text = intent.getStringExtra(Intent.EXTRA_TEXT);
             final String subject = intent.getStringExtra(Intent.EXTRA_SUBJECT);

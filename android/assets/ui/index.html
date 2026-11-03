@@ -442,12 +442,50 @@
       </details>
       <details id="acc-del-box" class="acc-more danger-zone">
         <summary>Delete account</summary>
-        <p class="hint">Deletes your account and what the app reported to the server (your activity and the jobs you applied to), right away.
-          Your CV and answers stay on this phone until you uninstall the app.</p>
+        <p class="hint">Deletes your account and everything the server keeps for it, right away: your CV, answers and jobs, your activity,
+          and the Google Drive connection (the files stay in your Drive). This phone keeps its copy until you uninstall the app.</p>
         <div class="field"><label for="acc-del-pw">Your password</label>
           <input id="acc-del-pw" type="password" autocomplete="current-password"></div>
         <button id="btn-acc-del" class="btn danger" type="button">Delete my account</button>
       </details>
+    </section>
+
+    <section class="panel" id="data-card">
+      <div class="panel-head"><h2>Your data</h2><span id="sync-state" class="tag"></span></div>
+      <p id="sync-line" class="hint">Your CV, answers and jobs are kept in your account, so every phone you sign in on has them.</p>
+      <div class="drive" id="drive-box">
+        <div class="drive-head">
+          <svg class="drive-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M8.6 3h6.8l6.2 10.8-3.4 5.9H5.8l-3.4-5.9z" opacity=".18"/>
+            <path d="M7.4 4.2 1.6 14.3l2.9 5 5.8-10.1zM16.6 4.2H10.2l5.8 10.1h5.8zM6 20.5h11.7l2.9-5H8.9z"/></svg>
+          <div><b>Google Drive</b><small id="drive-who"></small></div>
+          <span id="drive-state" class="tag"></span>
+        </div>
+        <p id="drive-text" class="hint"></p>
+        <div id="drive-files" class="drive-files" hidden>
+          <button class="drive-file" data-open="answers" type="button"><b>My answers</b><small>Setup answers, job titles, your info</small></button>
+          <button class="drive-file" data-open="jobs" type="button"><b>My jobs</b><small>Jobs to apply to, and every application's status</small></button>
+          <button class="drive-file" data-open="cv" type="button"><b>Your CV</b><small id="drive-cv-name">The file the app uses</small></button>
+        </div>
+        <div class="row wrap">
+          <button id="btn-drive-connect" class="btn primary" type="button">Connect Google Drive</button>
+          <button id="btn-drive-open" class="btn" data-open="folder" type="button">Open the folder</button>
+          <button id="btn-drive-sync" class="btn" type="button">Sync now</button>
+        </div>
+        <details id="drive-help" class="acc-more">
+          <summary>How editing in Drive works</summary>
+          <ul class="drive-how">
+            <li><b>My answers:</b> change an answer, a question's wording or its section; add a row with a section, a question and an answer; clear an answer to delete it.</li>
+            <li><b>My jobs:</b> change a job's Status (To apply, Applied, Interview, Offer, Rejected, Skipped) or its note; paste a job's link in a new row to add it.</li>
+            <li><b>Your CV:</b> on a computer, open the file in Drive, then File information &rsaquo; Manage versions &rsaquo; Upload new version (a PDF with text).</li>
+            <li>Your changes reach the app within a few minutes, or right away with Sync now. Columns you add stay.</li>
+          </ul>
+        </details>
+        <details id="drive-off-box" class="acc-more" hidden>
+          <summary>Disconnect Google Drive</summary>
+          <p class="hint">The app stops syncing with your Drive. The Auto Apply folder and its files stay in your Drive.</p>
+          <button id="btn-drive-off" class="btn danger" type="button">Disconnect</button>
+        </details>
+      </div>
     </section>
 
     <section class="panel" data-auto>

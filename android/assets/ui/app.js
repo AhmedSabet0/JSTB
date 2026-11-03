@@ -100,7 +100,7 @@
     document.body.classList.toggle('tabs', tabs);
     document.querySelectorAll('[data-tab]').forEach((b) => b.classList.toggle('on', b.dataset.tab === (TAB_OF[v] || v)));
     window.scrollTo(0, 0);
-    if (v === 'settings') loadSettings();
+    if (v === 'settings') { loadSettings(); loadDrive(); }
     if (v === 'profile') { loadSettings(); renderProfile(); }
     if (v === 'info') loadInfo();
     if (v === 'jobs') loadJobs();
@@ -152,7 +152,7 @@
   let firstState = true;
   async function refresh() {
     try {
-      state = await api('/api/state');
+      state = await api(document.hidden ? '/api/state?bg=1' : '/api/state');   // bg: not "in use" (no syncs for it)
     } catch (e) {
       return;
     }
@@ -372,10 +372,21 @@
     try {
       await api(`/api/account/${accMode}`, body);
       $('w-acc-pw').value = '';
+      if (accMode === 'login') {           // an account you used before brings your CV, answers and jobs
+        busy($('w-next'), 'Getting your data…');
+        try { await api('/api/sync/now', {}); } catch (e) { /* it syncs again by itself */ }
+      }
       await refresh();
       busy($('w-next'));
-      if (state.setup.setup_done) { go('home'); toast('Signed in.'); return; }
-      wShow('cv');
+      if (state.setup.setup_done && state.setup.has_cv) {
+        go('home');
+        toast(accMode === 'login' && ((state.sync || {}).note || '').includes('from your account')
+          ? 'Welcome back. Your CV, answers and jobs are on this phone.' : 'Signed in.');
+        return;
+      }
+      await loadProfile();
+      const first = wFirst(state.setup);
+      wShow(first === 'welcome' || first === 'account' ? 'cv' : first);
       kickSuggest(false);
     } catch (e) {
       busy($('w-next'));
@@ -830,6 +841,11 @@
       items.push(['', '<b>Sign in to LinkedIn</b><span>Easy Apply only works from a signed-in account. You sign in once.</span>',
         '<button class="btn primary" data-act="signin" type="button">Sign in to LinkedIn</button>']);
     }
+    const dr = (s.sync || {}).drive;
+    if (dr && dr.connected && dr.reconnect) {
+      items.push(['', '<b>Google Drive needs you to connect it again</b><span>Until then your CV, answers and jobs stay in your account, but not in your Drive.</span>',
+        '<button class="btn" data-act="drive" type="button">Connect again</button>']);
+    }
     const n = s.open_questions || 0;
     if (n) {
       items.push(['', `<b>${n === 1 ? 'A question is' : `${n} questions are`} waiting for your answer</b><span>Answer once and the jobs that waited are tried again by themselves.</span>`,
@@ -859,6 +875,7 @@
       if (a === 'setup') startSetup();
       if (a === 'signin') api('/api/linkedin', {}).catch((e) => toast(e.message, true));
       if (a === 'answers') go('info');
+      if (a === 'drive') api('/api/drive/connect', {}).catch((e) => toast(e.message, true));
       if (a === 'acc-check') accCheck(b);
       if (a === 'update') { go('settings'); setTimeout(() => $('update-card').scrollIntoView({ behavior: 'smooth' }), 300); }
       if (a === 'install-now') api('/api/update/install', {}).then(() => toast('Installing the update…')).catch((e) => toast(e.message, true));
@@ -1280,6 +1297,7 @@
     const s = state.setup;
     $('settings-running').hidden = !state.running;
     renderAccountCard();
+    renderDataCard();
     $('li-state').textContent = s.signed_in ? 'Signed in' : 'Not signed in';
     cvStates();
   }
@@ -1369,6 +1387,125 @@
     $('btn-acc-del').disabled = false;
     refresh();
   });
+  // ------------------------------------------------------------------ your data, and Google Drive
+  let driveInfo = null;
+  let driveBusy = false;
+  let driveAskedAt = 0;
+  async function loadDrive(fresh) {
+    if (!acc().signed_in) { driveInfo = null; renderDataCard(); return; }
+    driveAskedAt = Date.now();
+    const was = JSON.stringify([driveInfo && driveInfo.connected, driveInfo && driveInfo.reconnect]);
+    try {
+      const r = await api(`/api/sync${fresh ? '?fresh=1' : ''}`);
+      driveInfo = r.drive || null;
+    } catch (e) { /* shown as unknown */ }
+    renderDataCard();
+    if (JSON.stringify([driveInfo && driveInfo.connected, driveInfo && driveInfo.reconnect]) !== was) refresh();  // Home's banner
+  }
+  function renderDataCard() {
+    if (!state) return;
+    const a = acc();
+    const sy = state.sync || {};
+    const tag = $('sync-state');
+    $('drive-box').hidden = !a.signed_in;
+    if (!a.signed_in) {
+      tag.textContent = '';
+      tag.className = 'tag';
+      $('sync-line').textContent = 'Sign in so your CV, answers and jobs are kept in your account, for every phone you sign in on.';
+      return;
+    }
+    const bad = !!sy.error;
+    tag.textContent = sy.busy ? 'Syncing…' : bad ? 'Not synced' : sy.at ? 'Synced' : 'Waiting';
+    tag.className = `tag ${sy.busy ? 'info' : bad ? 'warn' : sy.at ? 'good' : ''}`;
+    $('sync-line').innerHTML = bad ? `${esc(sy.error)}` : sy.at
+      ? `Your CV, answers and jobs are kept in your account, so every phone you sign in on has them. Last synced ${esc(agoText(sy.at))}.`
+        + (sy.waiting ? ` ${plural(sy.waiting, 'change')} still to send.` : '')
+      : 'Your CV, answers and jobs are kept in your account, so every phone you sign in on has them.';
+    $('sync-line').classList.toggle('bad-text', bad);
+    const d = driveInfo || sy.drive || null;
+    const st = $('drive-state');
+    const on = !!(d && d.connected);
+    const ready = on && d.ready;
+    const reconnect = on && d.reconnect;
+    $('drive-who').textContent = on ? (d.email ? `Connected as ${d.email}` : 'Connected') : 'Not connected';
+    st.textContent = !d ? '' : reconnect ? 'Connect again' : on ? (d.error ? 'Problem' : ready ? 'On' : 'Setting up') : '';
+    st.className = `tag ${reconnect || (on && d.error) ? 'warn' : ready ? 'good' : on ? 'info' : ''}`;
+    let text;
+    if (!d) text = 'Checking…';
+    else if (!d.available && !on) text = d.error && !/not have Google Drive/.test(d.error) ? d.error
+      : 'Google Drive isn’t set up on the server yet.';
+    else if (!on) text = 'Keep your CV, your answers and your jobs in an Auto Apply folder in your own Google Drive too, and edit them there. The app sees only the files it makes, nothing else in your Drive.';
+    else if (reconnect) text = 'Google asks you to connect again (the access was removed or ran out). Your files are still in your Drive.';
+    else if (d.error) text = d.error;
+    else if (!ready) text = 'Making your Auto Apply folder: your CV, My answers and My jobs.';
+    else text = `In your Auto Apply folder. Synced ${agoText(d.synced_at)}.`;
+    $('drive-text').textContent = text;
+    $('drive-text').classList.toggle('bad-text', !!(on && d.error));
+    $('drive-files').hidden = !ready;
+    $('drive-cv-name').textContent = state.setup.cv_name || 'The file the app uses';
+    $('btn-drive-connect').hidden = on && !reconnect;
+    $('btn-drive-connect').textContent = reconnect ? 'Connect again' : 'Connect Google Drive';
+    $('btn-drive-connect').disabled = !d || (!d.available && !on) || driveBusy;
+    $('btn-drive-open').hidden = !ready;
+    $('btn-drive-sync').hidden = !on || reconnect;
+    $('btn-drive-sync').disabled = driveBusy;
+    $('btn-drive-sync').textContent = driveBusy ? 'Syncing…' : 'Sync now';
+    $('drive-help').hidden = !on;
+    $('drive-off-box').hidden = !on;
+  }
+  function agoText(ts) {
+    if (!ts) return 'never';
+    const s = Math.max(0, Date.now() / 1000 - ts);
+    if (s < 60) return 'just now';
+    if (s < 3600) return `${Math.round(s / 60)} min ago`;
+    if (s < 86400) return `${Math.round(s / 3600)} h ago`;
+    return new Date(ts * 1000).toLocaleDateString();
+  }
+  $('btn-drive-connect').addEventListener('click', async () => {
+    try {
+      await api('/api/drive/connect', {});
+      toast('Choose your Google account in the browser, allow Auto Apply, then come back here.');
+      driveAskedAt = 0;
+    } catch (e) { toast(e.message, true); }
+  });
+  async function driveSync(quiet) {
+    if (driveBusy) return;
+    driveBusy = true;
+    renderDataCard();
+    try {
+      const r = await api('/api/drive/sync', {});
+      driveInfo = r.drive || driveInfo;
+      if (!quiet) toast(driveInfo && driveInfo.error ? driveInfo.error : 'Synced with your Google Drive.', !!(driveInfo && driveInfo.error));
+      if (((r.sync || {}).note || '').includes('from your account')) { loadQueue(true); loadTracker(true); }
+    } catch (e) { if (!quiet) toast(e.message, true); }
+    driveBusy = false;
+    await refresh();
+    renderDataCard();
+  }
+  $('btn-drive-sync').addEventListener('click', () => driveSync(false));
+  document.querySelectorAll('[data-open]').forEach((b) => b.addEventListener('click', () => {
+    api('/api/drive/open', { which: b.dataset.open }).catch((e) => toast(e.message, true));
+  }));
+  $('btn-drive-off').addEventListener('click', async () => {
+    try {
+      const r = await api('/api/drive/disconnect', {});
+      driveInfo = r.drive || null;
+      $('drive-off-box').open = false;
+      toast('Google Drive disconnected. The files stay in your Drive.');
+    } catch (e) { toast(e.message, true); }
+    renderDataCard();
+  });
+  // Back in the app (from Google's page, or from editing a sheet): what changed comes in.
+  function driveResumed() {
+    const d = driveInfo || (state && state.sync && state.sync.drive);
+    if (!acc().signed_in) return;
+    if (!d || !d.connected || d.reconnect) loadDrive(true);   // maybe just connected on Google's page
+    else if (Date.now() - driveAskedAt > 60000) {            // maybe edited in Drive meanwhile
+      driveAskedAt = Date.now();
+      driveSync(true);
+    }
+  }
+
   $('btn-rerun').addEventListener('click', async () => {
     wJobsFilled = false;
     await api('/api/setup', { done: false }).catch(() => {});
@@ -2040,6 +2177,7 @@
 
   // Back from the LinkedIn app, or from a company's site in the app's browser.
   window.aaResumed = () => {
+    driveResumed();
     if (awaiting && Date.now() - awaiting.at > 3000) {
       const id = awaiting.id;
       awaiting = null;

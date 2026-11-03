@@ -51,6 +51,21 @@ How form questions are answered (`core/Profile.java`, both builds):
 Your info (`facts.json`, `core/Facts.java`): everything forms ask about you, in 12 categories, matched to new wordings of
 the same question (exact, nearly the same words, or by meaning through the AI).
 
+## Your data in your account (both builds)
+
+`core/Sync.java` keeps the phone's data the same as the account's on the server: the setup answers, the settings that
+follow you (not the update ones), your info, your jobs, auto apply's job log (without each form's questions) and the
+CV. Each item is a record; `sync.json` remembers what was synced and the server's revision of it.
+
+- A sync takes what changed on the server (from another phone, or from Google Drive through the server), then sends
+  what changed here. An item changed on both sides: the newer change wins on both.
+- It runs a few seconds after you change something, every 2 minutes while the app is open (every minute while auto
+  apply runs), after signing in, and with Sync now.
+- A new phone: sign in, and the setup is skipped when the account has a CV and finished setup ("Welcome back").
+- Another account on the same phone: this phone's data is replaced by that account's (the first account keeps its own).
+- Google Drive: Settings > Your data. The app opens Google's page in the browser; after that the server does the work
+  (see `server/README.md`). Back in the app, it syncs (the server reads Drive, then the phone takes what changed).
+
 ## The server
 
 - `core/Account.java`: sign up / in / out / delete. Only a sign-in token is kept on the phone. Every request says which

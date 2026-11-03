@@ -1022,6 +1022,155 @@ public class EngineTest {
         com.autoapply.bot.core.Account.defaultServer = TestServer.base;
     }
 
+
+    // ------------------------------------------------------------------ your data in your account
+    static Map<String, Object> userData(String email) throws Exception {
+        return Json.map(TestServer.admin("GET", "/admin/api/users/" + TestServer.uid(email), null).get("data"));
+    }
+
+    static File newPhone(String name) throws Exception {
+        File d = fresh(name, false);
+        new File(d, "cv.pdf").delete();
+        new File(d, "cv_text.txt").delete();
+        return d;
+    }
+
+    static void sync() throws Exception {
+        System.out.println("\n== Your data in your account: two phones, changes both ways, a new phone, another account");
+        String email = "sync@example.com";
+        String pw = "sync-pass-123";
+        TestServer.signup(email, pw);
+        // Phone A has data from before this version: CV, setup answers, your info, a job of yours, auto apply's log.
+        File a = fresh("sync_a", false);
+        write(a, "config.json", Json.pretty(config("KEYWORDS", "Network Engineer;DevOps Engineer", "DAILY_GOAL", "12",
+                "CV_NAME", "Sara CV.pdf", "SETUP_DONE", "1", "AUTO_UPDATE", "0")));
+        Engine ea = new Engine(new TestPlatform("classic"), a);
+        Api aa = new Api(ea);
+        api(aa, "/api/account/login", Json.obj("email", email, "password", pw));
+        api(aa, "/api/profile", Json.obj("profile", Json.obj("phone", "01012345678", "graduation_year", "2019",
+                "expected_salary", "30000", "notice_days", "30", "english", "Fluent")));
+        api(aa, "/api/facts", Json.obj("op", "add", "category", "Skills", "label", "Years of experience with Ansible", "value", "4"));
+        Map<String, Object> added = api(aa, "/api/copilot/add", Json.obj("text", "Network Engineer at Orange https://www.linkedin.com/jobs/view/4012345678/"));
+        ea.store.add("4099999999", "applied", "DevOps Engineer", "Vodafone", 8, "", null);
+        Map<String, Object> r = api(aa, "/api/sync/now", Json.obj());
+        Map<String, Object> d = userData(email);
+        Map<String, Object> n = Json.map(d.get("counts"));
+        check("phone A fills the account (CV, answers, info, jobs)", Json.bool(r, "ok") && Json.map(d.get("cv")) != null
+                && "Sara CV.pdf".equals(Json.str(Json.map(d.get("cv")), "name")) && Json.num(n, "facts", 0) == 1
+                && Json.num(n, "copilot", 0) == 1 && Json.num(n, "jobs", 0) == 1 && Json.num(n, "profile", 0) >= 14
+                && Json.num(n, "settings", 0) == 17, Json.stringify(r) + " " + Json.stringify(d));
+        check("nothing waits after the sync", Json.num(Json.map(r.get("sync")), "waiting", -1) == 0, r.get("sync"));
+        String auto = Util.readText(new File(a, "config.json"));
+        check("this phone's update settings stay on it", !Json.stringify(d).contains("AUTO_UPDATE"), auto);
+
+        // Phone B: new, signs in, has everything.
+        File b = newPhone("sync_b");
+        Engine eb = new Engine(new TestPlatform("classic"), b);
+        Api ab = new Api(eb);
+        api(ab, "/api/account/login", Json.obj("email", email, "password", pw));
+        check("a new phone has no CV yet", !Json.bool(Json.map(api(ab, "/api/state", null).get("setup")), "has_cv"));
+        r = api(ab, "/api/sync/now", Json.obj());
+        Map<String, Object> setup = Json.map(r.get("setup"));
+        check("phone B gets the CV (file, text, name)", Json.bool(r, "ok") && Json.bool(setup, "has_cv")
+                && Arrays.equals(Files.readAllBytes(new File(a, "cv.pdf").toPath()), Files.readAllBytes(new File(b, "cv.pdf").toPath()))
+                && Util.readText(new File(b, "cv_text.txt")).equals(Util.readText(new File(a, "cv_text.txt")))
+                && "Sara CV.pdf".equals(Json.str(setup, "cv_name")), Json.stringify(r));
+        check("phone B gets the setup as done, the answers and job titles", Json.bool(setup, "setup_done") && Json.bool(setup, "profile_done")
+                && "01012345678".equals(Json.str(eb.profile.load(), "phone"))
+                && "Network Engineer;DevOps Engineer".equals(eb.config.load().get("KEYWORDS")) && "12".equals(eb.config.load().get("DAILY_GOAL")),
+                setup);
+        String factId = Json.str(eb.store.factsCopy().isEmpty() ? Json.obj() : eb.store.factsCopy().get(0), "id");
+        check("phone B gets your info, your jobs and auto apply's log", eb.store.factCount() == 1
+                && "4".equals(String.valueOf(eb.store.answer("years of experience with ansible")))
+                && eb.copilot.get("li:4012345678") != null && "applied".equals(eb.store.statusOf("4099999999")));
+        check("phone B's update settings are its own", !"0".equals(eb.config.load().get("AUTO_UPDATE")));
+
+        // Changes on B reach A, changes on A reach B.
+        api(ab, "/api/facts", Json.obj("op", "update", "id", factId, "value", "5"));
+        api(ab, "/api/copilot/update", Json.obj("id", "li:4012345678", "stage", "interview", "note", "HR call Sunday"));
+        api(ab, "/api/settings", Json.obj("DAILY_GOAL", "15"));
+        api(ab, "/api/sync/now", Json.obj());
+        r = api(aa, "/api/sync/now", Json.obj());
+        Map<String, Object> it = ea.copilot.get("li:4012345678");
+        check("B's changes reach A", "5".equals(String.valueOf(ea.store.answer("years of experience with ansible")))
+                && "interview".equals(Json.str(it, "stage")) && "applied".equals(Json.str(it, "state"))
+                && "HR call Sunday".equals(Json.str(it, "note")) && "15".equals(ea.config.load().get("DAILY_GOAL"))
+                && Json.str(Json.map(r.get("sync")), "note").contains("from your account"), Json.stringify(r));
+        api(aa, "/api/facts", Json.obj("op", "delete", "id", factId));
+        api(aa, "/api/copilot/remove", Json.obj("id", "li:4012345678"));
+        api(aa, "/api/sync/now", Json.obj());
+        api(ab, "/api/sync/now", Json.obj());
+        check("deleted on A: gone on B", eb.store.factCount() == 0 && eb.copilot.get("li:4012345678") == null);
+        // The same thing changed on both: the later change wins on both phones.
+        api(aa, "/api/settings", Json.obj("LOCATION", "Cairo"));      // A changes it first, and syncs later
+        Thread.sleep(1100);
+        api(ab, "/api/settings", Json.obj("LOCATION", "Giza"));
+        api(ab, "/api/sync/now", Json.obj());
+        api(aa, "/api/sync/now", Json.obj());
+        check("the same setting changed on both: the later one wins everywhere", "Giza".equals(ea.config.load().get("LOCATION"))
+                && "Giza".equals(eb.config.load().get("LOCATION")), ea.config.load().get("LOCATION"));
+        // A new CV on B reaches A.
+        byte[] cv2 = (Util.readText(new File(b, "cv_text.txt")) + "\nCertifications: CCNP Enterprise").getBytes(Util.UTF8);
+        r = api(ab, "/api/cv", Json.obj("name", "Sara CV 2026.txt", "data", Util.base64(cv2)));
+        api(ab, "/api/sync/now", Json.obj());
+        r = api(aa, "/api/sync/now", Json.obj());
+        check("a new CV on B reaches A", new File(a, "cv.txt").isFile() && !new File(a, "cv.pdf").isFile()
+                && Util.readText(new File(a, "cv_text.txt")).contains("CCNP Enterprise")
+                && "Sara CV 2026.txt".equals(ea.config.load().get("CV_NAME")), Json.stringify(r));
+        // Auto apply's results go up too.
+        ea.store.add("4011111111", "skipped_low_score", "Sales Engineer", "Acme", 3, "Low match", null);
+        api(aa, "/api/sync/now", Json.obj());
+        api(ab, "/api/sync/now", Json.obj());
+        check("auto apply's results on A are on B (it will not look at them again)", "skipped_low_score".equals(eb.store.statusOf("4011111111")));
+
+        // Google Drive, when the server has no Google client yet.
+        Map<String, Object> s = api(ab, "/api/sync", null);
+        check("Google Drive: the app learns it is not set up on the server", Json.bool(s, "ok")
+                && !Json.bool(Json.map(s.get("drive")), "available") && !Json.bool(Json.map(s.get("drive")), "connected"), s);
+        r = api(ab, "/api/drive/connect", Json.obj());
+        check("Connect says why it cannot", !Json.bool(r, "ok") && Json.str(r, "error").contains("not set up"), r);
+
+        // Another account on phone B: its data replaces the first account's on this phone (that one stays in its account).
+        TestServer.signup("other@example.com", "other-pass-123");
+        api(ab, "/api/account/logout", Json.obj());
+        api(ab, "/api/account/login", Json.obj("email", "other@example.com", "password", "other-pass-123"));
+        r = api(ab, "/api/sync/now", Json.obj());
+        setup = Json.map(r.get("setup"));
+        check("another account on phone B: the first account's data is not shown to it", !Json.bool(setup, "has_cv")
+                && !Json.bool(setup, "setup_done") && eb.copilot.list().isEmpty() && eb.store.statusOf("4099999999") == null
+                && "".equals(Json.str(eb.profile.load(), "phone")), Json.stringify(setup));
+        Map<String, Object> other = Json.map(userData("other@example.com").get("counts"));
+        check("and none of it went into the other account", Json.num(other, "facts", 0) == 0 && Json.num(other, "jobs", 0) == 0
+                && Json.num(other, "copilot", 0) == 0, other);
+        File c = newPhone("sync_c");
+        Engine ec = new Engine(new TestPlatform("classic"), c);
+        Api ac = new Api(ec);
+        api(ac, "/api/account/login", Json.obj("email", email, "password", pw));
+        r = api(ac, "/api/sync/now", Json.obj());
+        check("the first account still has everything (phone C)", Json.bool(Json.map(r.get("setup")), "has_cv")
+                && "Giza".equals(ec.config.load().get("LOCATION")) && "applied".equals(ec.store.statusOf("4099999999")), Json.stringify(r));
+
+        // Signed out, with background syncs on: the sync thread waits quietly (no busy loop).
+        com.autoapply.bot.core.Sync.auto = true;
+        try {
+            Engine idle = new Engine(new TestPlatform("classic"), fresh("sync_idle", false));
+            idle.sync.changed();
+            Thread.sleep(400);
+            Thread t = null;
+            for (Thread x : Thread.getAllStackTraces().keySet()) {
+                if (x.getName().equals("sync") && x.isAlive()) {
+                    t = x;
+                }
+            }
+            java.lang.management.ThreadMXBean mx = java.lang.management.ManagementFactory.getThreadMXBean();
+            long c0 = t == null ? 0 : mx.getThreadCpuTime(t.getId());
+            Thread.sleep(1500);
+            long c1 = t == null ? 0 : mx.getThreadCpuTime(t.getId());
+            check("signed out: the sync thread waits quietly", t != null && c1 - c0 < 150_000_000L, (c1 - c0) / 1_000_000 + " ms of CPU");
+        } finally {
+            com.autoapply.bot.core.Sync.auto = false;
+        }
+    }
     // ------------------------------------------------------------------ main
     // ------------------------------------------------------------------ jobs you apply to yourself (Google Play build)
     static void copilot() throws Exception {
@@ -1141,6 +1290,7 @@ public class EngineTest {
         token = TestServer.signup(EMAIL, PASSWORD);
         TestServer.setPro(EMAIL, true);
         com.autoapply.bot.core.Reporter.every = 0.5;
+        com.autoapply.bot.core.Sync.auto = false;   // tests share one account: syncs only when a test asks
         Util.speed = 0.02;
         Util.echo = Boolean.getBoolean("echo");
         String which = args.length > 0 ? args[0] : "all";
@@ -1174,6 +1324,9 @@ public class EngineTest {
             }
             if (which.equals("all") || which.equals("copilot")) {
                 copilot();
+            }
+            if (which.equals("all") || which.equals("sync")) {
+                sync();
             }
         } finally {
             CdpPage.stopChrome();

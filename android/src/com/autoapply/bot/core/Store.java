@@ -3,6 +3,7 @@ package com.autoapply.bot.core;
 import java.io.File;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.Date;
@@ -307,6 +308,96 @@ public final class Store {
         Map<String, Object> j = find(id);
         if (j != null) {
             jobs.remove(j);
+            saveJobs();
+        }
+    }
+
+    // ------------------------------------------------------------------ the same data in your account (Sync)
+    /** The job log without each form's questions and answers (those stay on this phone). */
+    public synchronized List<Map<String, Object>> jobsForSync() {
+        List<Map<String, Object>> out = new ArrayList<Map<String, Object>>();
+        for (Map<String, Object> j : jobs) {
+            Map<String, Object> c = new LinkedHashMap<String, Object>(j);
+            c.remove("qa");
+            out.add(c);
+        }
+        return out;
+    }
+
+    /** Jobs from your account (another phone, Google Drive), added or replaced by ID; nothing is reported for them. */
+    public synchronized void mergeJobs(Map<String, Map<String, Object>> upserts, Collection<String> deletes) {
+        for (String id : deletes) {
+            Map<String, Object> j = find(id);
+            if (j != null) {
+                jobs.remove(j);
+            }
+        }
+        for (Map.Entry<String, Map<String, Object>> e : upserts.entrySet()) {
+            Map<String, Object> j = new LinkedHashMap<String, Object>(e.getValue());
+            j.put("id", e.getKey());
+            Map<String, Object> old = find(e.getKey());
+            if (old == null) {
+                jobs.add(j);
+            } else {
+                if (old.get("qa") != null && !j.containsKey("qa")) {
+                    j.put("qa", old.get("qa"));
+                }
+                jobs.set(jobs.indexOf(old), j);
+            }
+        }
+        Collections.sort(jobs, new Comparator<Map<String, Object>>() {   // oldest first, as recorded
+            @Override
+            public int compare(Map<String, Object> a, Map<String, Object> b) {
+                return Double.compare(Json.dbl(a, "ts", 0), Json.dbl(b, "ts", 0));
+            }
+        });
+        while (jobs.size() > 5000) {
+            jobs.remove(0);
+        }
+        saveJobs();
+    }
+
+    /** Facts from your account: added, replaced or deleted by ID. One made in Google Drive gets its category and the
+     *  question it answers here. */
+    public void mergeFacts(Map<String, Map<String, Object>> upserts, Collection<String> deletes) {
+        synchronized (answersLock) {
+            for (String id : deletes) {
+                Map<String, Object> f = factById(id);
+                if (f != null) {
+                    facts.remove(f);
+                }
+            }
+            for (Map.Entry<String, Map<String, Object>> e : upserts.entrySet()) {
+                Map<String, Object> f = new LinkedHashMap<String, Object>(e.getValue());
+                f.put("id", e.getKey());
+                String label = Json.str(f, "label").trim();
+                String cat = Json.str(f, "category").trim();
+                f.put("category", cat.isEmpty() ? Facts.categorize(label) : Facts.category(cat));
+                if (Json.strings(f.get("asked")).isEmpty() && !Util.normKey(label).isEmpty()) {
+                    f.put("asked", Json.list(Util.normKey(label)));
+                }
+                if (!f.containsKey("source")) {
+                    f.put("source", "you");
+                }
+                Map<String, Object> old = factById(e.getKey());
+                if (old == null) {
+                    facts.add(f);
+                } else {
+                    facts.set(facts.indexOf(old), f);
+                }
+            }
+            saveFacts();
+        }
+    }
+
+    /** Signed in with another account: this phone's facts and job log belonged to the one before. */
+    public void clearForAccount() {
+        synchronized (answersLock) {
+            facts.clear();
+            saveFacts();
+        }
+        synchronized (this) {
+            jobs.clear();
             saveJobs();
         }
     }

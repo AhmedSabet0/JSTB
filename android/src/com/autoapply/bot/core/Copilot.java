@@ -5,6 +5,9 @@ import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Calendar;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -210,6 +213,46 @@ public final class Copilot {
             engine.reporter.track(report);
         }
         return it;
+    }
+
+    /** Jobs from your account (another phone, Google Drive): added, replaced or deleted by ID; nothing is reported. */
+    public synchronized void merge(Map<String, Map<String, Object>> upserts, Collection<String> deletes) {
+        for (String id : deletes) {
+            for (int i = 0; i < items.size(); i++) {
+                if (id.equals(Json.str(items.get(i), "id"))) {
+                    items.remove(i);
+                    break;
+                }
+            }
+        }
+        for (Map.Entry<String, Map<String, Object>> e : upserts.entrySet()) {
+            Map<String, Object> it = new LinkedHashMap<String, Object>(e.getValue());
+            it.put("id", e.getKey());
+            int at = -1;
+            for (int i = 0; i < items.size(); i++) {
+                if (e.getKey().equals(Json.str(items.get(i), "id"))) {
+                    at = i;
+                }
+            }
+            if (at >= 0) {
+                items.set(at, it);
+            } else {
+                items.add(it);
+            }
+        }
+        Collections.sort(items, new Comparator<Map<String, Object>>() {   // newest added first, as add() keeps them
+            @Override
+            public int compare(Map<String, Object> a, Map<String, Object> b) {
+                return Double.compare(Json.dbl(b, "added", 0), Json.dbl(a, "added", 0));
+            }
+        });
+        save();
+    }
+
+    /** Signed in with another account: these jobs belonged to the one before. */
+    public synchronized void clear() {
+        items.clear();
+        save();
     }
 
     public synchronized boolean remove(String id) {

@@ -6,9 +6,14 @@
 - Reports: while it works, the app reports its status and the jobs it applied to. The answer can tell it to stop.
 - The admin page (/admin): every user, Pro on/off, applications today / this week / in total, Stop and Stop all,
   and the AI settings.
+- Each user's data (setup answers, settings, your info, jobs, the CV), the same on all their phones (/v1/me/data,
+  /v1/me/cv), and in their Google Drive when they connect it (drive.py).
 - Public pages Google Play asks for: /privacy and /delete-account.
 """
+import asyncio
+import base64
 import hmac
+import json
 import logging
 import os
 import re
@@ -21,7 +26,7 @@ from fastapi import FastAPI, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 
-from . import ai, db, pages, security
+from . import ai, db, drive, pages, records, security
 
 log = logging.getLogger("autoapply")
 
@@ -58,7 +63,9 @@ async def lifespan(_app):
     db.init()
     if not ADMIN_PASSWORD:
         log.warning("ADMIN_PASSWORD is not set: the admin page is disabled.")
+    drive.start_loop()
     yield
+    await drive.close()
     await ai.close()
 
 
@@ -92,9 +99,16 @@ def client_ip(request):
     return request.client.host if request.client else "?"
 
 
-async def body_json(request):
+async def body_json(request, limit=2_000_000):
+    """The request's JSON object; at most `limit` bytes (a CV upload or a big sync may send more)."""
+    size = request.headers.get("content-length", "")
+    if size.isdigit() and int(size) > limit:
+        raise ApiError(413, "That request is too big.", "too_big")
+    raw = await request.body()
+    if len(raw) > limit:
+        raise ApiError(413, "That request is too big.", "too_big")
     try:
-        data = await request.json()
+        data = json.loads(raw)
     except ValueError:
         raise ApiError(400, "Send a JSON body.", "bad_request")
     if not isinstance(data, dict):
@@ -203,6 +217,7 @@ async def delete_web(request: Request):
     ok = await run_in_threadpool(security.check_password, password, row["pw_hash"] if row else None)
     if row is None or not ok:
         return HTMLResponse(pages.delete_form("Wrong email or password."), status_code=400)
+    await drive.unlink(row["id"])      # Google forgets the app's access first
     with db.tx() as t:
         t.execute("DELETE FROM users WHERE id = ?", (row["id"],))
     return HTMLResponse(pages.delete_form("Your account and its data were deleted.", ok=True))
@@ -284,6 +299,7 @@ async def delete_me(request: Request):
     b = await body_json(request)
     if not await run_in_threadpool(security.check_password, str(b.get("password") or ""), user["pw_hash"]):
         raise ApiError(400, "That password is not right.", "bad_password")
+    await drive.unlink(user["id"])
     with db.tx() as t:
         t.execute("DELETE FROM users WHERE id = ?", (user["id"],))
     return {"ok": True}
@@ -397,6 +413,181 @@ async def report(request: Request):
             "announcement": s.get("announcement", ""), "update": update_info(flavor, code, s), "every": REPORT_EVERY}
 
 
+# ---------------------------------------------------------------- your data, the same on every phone and in Google Drive
+SYNC_PAGE = 2000
+
+
+def client_offset(b):
+    """Seconds to add to the phone's clock to get the server's (phones' clocks can be off)."""
+    phone = b.get("now")
+    if isinstance(phone, (int, float)) and not isinstance(phone, bool) and abs(time.time() - phone) < 366 * 86400:
+        return time.time() - phone
+    return 0.0
+
+
+def change_time(value, offset, now):
+    t = number(value, 0, 10 ** 11, now)
+    return max(0.0, min(now, t + offset))
+
+
+@app.get("/v1/me/data")
+async def my_data(request: Request, since: int = 0, limit: int = SYNC_PAGE):
+    """What changed since revision `since` (everything for 0), oldest first. Deleted items come with d = null."""
+    user = current_user(request)
+    limit = max(1, min(SYNC_PAGE, limit))
+    c = db.conn()
+    rev = c.execute("SELECT data_rev FROM users WHERE id = ?", (user["id"],)).fetchone()["data_rev"]
+    rows = c.execute("SELECT kind, rid, data, rev, mtime FROM records WHERE user_id = ? AND rev > ? AND rev <= ? "
+                     + ("AND data IS NOT NULL " if since <= 0 else "") + "ORDER BY rev LIMIT ?",
+                     (user["id"], max(0, since), rev, limit)).fetchall()
+    out = [{"k": r["kind"], "id": r["rid"], "d": records.loads(r["data"]), "rev": r["rev"], "t": r["mtime"]} for r in rows]
+    more = len(rows) == limit
+    return {"ok": True, "rev": out[-1]["rev"] if more else rev, "records": out, "more": more, "now": time.time()}
+
+
+@app.post("/v1/me/data")
+async def save_my_data(request: Request):
+    """Changes from a phone: [{k, id, d (null = deleted), base (the revision the phone had), t (when it changed)}].
+    A change to an item that changed here since `base` is kept only when it is the newer one; else the answer has the
+    server's item ("conflict") for the phone to take."""
+    user = current_user(request)
+    b = await body_json(request, 16_000_000)
+    changes = b.get("changes")
+    if not isinstance(changes, list) or len(changes) > 1000:
+        raise ApiError(400, "Send a list of at most 1000 changes.", "bad_request")
+    offset, now = client_offset(b), time.time()
+    latest = {}
+    for ch in changes:
+        if not isinstance(ch, dict):
+            raise ApiError(400, "Each change is an object.", "bad_request")
+        kind, rid, data = str(ch.get("k") or ""), str(ch.get("id") or ""), ch.get("d")
+        if not records.KIND_RE.match(kind) or kind == "cv" or not 0 < len(rid) <= records.RID_MAX:
+            raise ApiError(400, f"Not a kind of data the server keeps: {kind[:20]}/{rid[:40]}", "bad_record")
+        if data is not None and (not isinstance(data, dict) or len(records.dumps(data)) > records.DATA_MAX):
+            raise ApiError(400, f"Too big or not an object: {kind}/{rid[:40]}", "bad_record")
+        latest[(kind, rid)] = (data, int(number(ch.get("base"), 0, 10 ** 12, 0)), change_time(ch.get("t"), offset, now))
+    results, todo = {}, []
+    with db.tx() as t:
+        room = records.MAX_RECORDS - records.count(t, user["id"])
+        for (kind, rid), (data, base, mtime) in latest.items():
+            cur = records.current(t, user["id"], kind, rid)
+            if cur is not None and cur["rev"] > base and mtime < cur["mtime"]:
+                results[(kind, rid)] = {"k": kind, "id": rid, "status": "conflict", "d": cur["data"], "rev": cur["rev"],
+                                        "t": cur["mtime"]}
+            elif (cur is None and data is None) or (cur is not None and cur["data"] == data):
+                results[(kind, rid)] = {"k": kind, "id": rid, "status": "same", "rev": cur["rev"] if cur else 0}
+            else:
+                if data is not None and (cur is None or cur["data"] is None):
+                    room -= 1
+                    if room < 0:
+                        raise ApiError(413, "Your account holds as much data as it can. Delete old jobs first.", "too_much")
+                todo.append((kind, rid, data, max(mtime, cur["mtime"] if cur else 0)))
+        revs = records.write(t, user["id"], todo, "app")
+        for kind, rid, _d, _t in todo:
+            results[(kind, rid)] = {"k": kind, "id": rid, "status": "saved", "rev": revs.get((kind, rid), 0)}
+        rev = t.execute("SELECT data_rev FROM users WHERE id = ?", (user["id"],)).fetchone()["data_rev"]
+    if todo:
+        drive.poke()
+    return {"ok": True, "rev": rev, "results": list(results.values())}
+
+
+@app.get("/v1/me/cv")
+async def my_cv(request: Request):
+    user = current_user(request)
+    f = records.cv_file(db.conn(), user["id"])
+    rec = records.current(db.conn(), user["id"], "cv", "main")
+    if f is None or rec is None or rec["data"] is None:
+        raise ApiError(404, "Your account has no CV yet.", "no_cv")
+    return {"ok": True, "name": f["file_name"], "sha256": f["sha256"], "size": f["size"], "data": records.b64(f["data"]),
+            "text": rec["data"].get("text", ""), "rev": rec["rev"], "t": rec["mtime"]}
+
+
+CV_NAME_BAD = re.compile(r'[\\/:*?"<>|]')
+
+
+@app.post("/v1/me/cv")
+async def save_my_cv(request: Request):
+    """The CV file from the phone ({name, data: base64, text, base, t}), with the text the app read from it."""
+    user = current_user(request)
+    b = await body_json(request, 8_000_000)
+    name = CV_NAME_BAD.sub("_", text(b.get("name"), 120)) or "cv.pdf"
+    if not records.cv_ext(name):
+        raise ApiError(400, "The CV must be a PDF or a .txt file.", "bad_cv")
+    try:
+        raw = base64.b64decode(str(b.get("data") or ""), validate=True)
+    except ValueError:
+        raise ApiError(400, "The CV file did not arrive whole.", "bad_cv")
+    if len(raw) < 100 or len(raw) > records.CV_MAX:
+        raise ApiError(400, "The CV file must be between 100 bytes and 5 MB.", "bad_cv")
+    cv_text = records.clean_text(b.get("text") if records.cv_ext(name) == ".pdf" else raw.decode("utf-8", "replace"))
+    if len(cv_text) < 150:
+        raise ApiError(400, "No text could be read from this CV.", "bad_cv")
+    now = time.time()
+    mtime = change_time(b.get("t"), client_offset(b), now)
+    base = int(number(b.get("base"), 0, 10 ** 12, 0))
+    with db.tx() as t:
+        cur = records.current(t, user["id"], "cv", "main")
+        if cur is not None and cur["rev"] > base and mtime < cur["mtime"]:
+            return {"ok": True, "status": "conflict", "rev": cur["rev"], "d": cur["data"], "t": cur["mtime"]}
+        rev, sha = records.save_cv(t, user["id"], name, raw, cv_text, max(mtime, cur["mtime"] if cur else 0), "app")
+    drive.poke()
+    return {"ok": True, "status": "saved", "rev": rev, "sha256": sha}
+
+
+# ---------------------------------------------------------------- Google Drive
+@app.get("/v1/me/drive")
+async def my_drive(request: Request):
+    user = current_user(request)
+    return {"ok": True, "drive": drive.status(user["id"])}
+
+
+@app.post("/v1/me/drive/link")
+async def link_drive(request: Request):
+    """The Google page to open in the browser, where the user lets Auto Apply use a folder in their Drive."""
+    user = current_user(request)
+    try:
+        url = drive.start_url(user["id"])
+    except drive.DriveError as e:
+        raise ApiError(403, e.message, "drive_off")
+    return {"ok": True, "url": url}
+
+
+@app.post("/v1/me/drive/sync")
+async def sync_drive(request: Request):
+    user = current_user(request)
+    if db.one("SELECT 1 FROM drive_links WHERE user_id = ?", (user["id"],)) is None:
+        raise ApiError(400, "Connect Google Drive first.", "drive_not_linked")
+    try:
+        st = await asyncio.wait_for(asyncio.shield(drive.sync_user(user["id"], force=True)), timeout=50)
+    except asyncio.TimeoutError:
+        st = drive.status(user["id"])
+    return {"ok": True, "drive": st}
+
+
+@app.post("/v1/me/drive/unlink")
+async def unlink_drive(request: Request):
+    user = current_user(request)
+    await drive.unlink(user["id"])
+    return {"ok": True, "drive": drive.status(user["id"])}
+
+
+@app.get("/oauth/google/callback", response_class=HTMLResponse)
+async def google_callback(request: Request):
+    q = request.query_params
+    if q.get("error"):
+        return HTMLResponse(pages.drive_result(False, "Google Drive was not connected (you said no, or closed the page). "
+                                                      "You can try again from the app."), status_code=400)
+    code, state = q.get("code", ""), q.get("state", "")
+    if not code or not state:
+        return HTMLResponse(pages.drive_result(False, "This page needs the link from Google. Start from the app."),
+                            status_code=400)
+    try:
+        email = await drive.finish(code, state)
+    except drive.DriveError as e:
+        return HTMLResponse(pages.drive_result(False, e.message), status_code=400)
+    return HTMLResponse(pages.drive_result(True, email))
+
+
 # ---------------------------------------------------------------- admin
 def require_admin(request, write=False):
     tok = request.cookies.get("aa_admin", "")
@@ -460,7 +651,10 @@ def settings_json():
             "signups_open": s.get("signups_open") == "1", "new_users_pro": s.get("new_users_pro") == "1",
             "announcement": s.get("announcement", ""), "play_url": s.get("play_url", ""),
             "min_version_github": db.setting_int(s, "min_version_github", 0, 10 ** 7),
-            "min_version_play": db.setting_int(s, "min_version_play", 0, 10 ** 7)}
+            "min_version_play": db.setting_int(s, "min_version_play", 0, 10 ** 7),
+            "google_client_id": s.get("google_client_id", ""), "has_google_secret": bool(s.get("google_client_secret")),
+            "google_redirect": drive.redirect_uri() if drive.PUBLIC_URL else "", "google_ready": drive.configured(s),
+            "public_url": drive.PUBLIC_URL}
 
 
 USER_SQL = """
@@ -478,7 +672,10 @@ SELECT u.id, u.email, u.name, u.created_at, u.pro, u.pro_changed_at, u.note, u.r
     AS problems_today,
   (SELECT COALESCE(SUM(g.calls), 0) FROM ai_usage g WHERE g.user_id = u.id AND g.day = :today) AS ai_today,
   (SELECT COALESCE(SUM(g.tokens), 0) FROM ai_usage g WHERE g.user_id = u.id AND g.day = :today) AS tokens_today,
-  (SELECT COUNT(*) FROM tokens k WHERE k.user_id = u.id) AS devices
+  (SELECT COUNT(*) FROM tokens k WHERE k.user_id = u.id) AS devices,
+  u.data_rev, u.data_at,
+  (SELECT COUNT(*) FROM drive_links d WHERE d.user_id = u.id) AS drive,
+  (SELECT d.error_code FROM drive_links d WHERE d.user_id = u.id) AS drive_error
 FROM users u
 """
 
@@ -506,7 +703,8 @@ async def admin_overview(request: Request):
               "applied_today": sum(u["applied_today"] for u in users),
               "applied_week": sum(u["applied_week"] for u in users),
               "applied_total": sum(u["applied_total"] for u in users),
-              "ai_today": sum(u["ai_today"] for u in users), "tokens_today": sum(u["tokens_today"] for u in users)}
+              "ai_today": sum(u["ai_today"] for u in users), "tokens_today": sum(u["tokens_today"] for u in users),
+              "drive": sum(1 for u in users if u["drive"])}
     versions = {}
     for u in users:
         if u["app_version"]:
@@ -537,7 +735,10 @@ async def admin_user(uid: int, request: Request):
             a["url"] = f"https://www.linkedin.com/jobs/view/{a['job_id']}/"
     days = [dict(r) for r in db.all_rows(
         "SELECT day, calls, tokens FROM ai_usage WHERE user_id = ? ORDER BY day DESC LIMIT 14", (uid,))]
-    return {"ok": True, "user": user, "applications": apps, "ai_days": days}
+    cv = records.cv_file(db.conn(), uid)
+    data = {"counts": records.summary(db.conn(), uid), "rev": user["data_rev"], "at": user["data_at"],
+            "cv": {"name": cv["file_name"], "size": cv["size"], "at": cv["at"]} if cv else None, "drive": drive.status(uid)}
+    return {"ok": True, "user": user, "applications": apps, "ai_days": days, "data": data}
 
 
 @app.post("/admin/api/users/{uid}")
@@ -593,6 +794,7 @@ async def admin_stop(uid: int, request: Request):
 async def admin_delete(uid: int, request: Request):
     require_admin(request, write=True)
     get_user(uid)
+    await drive.unlink(uid)
     with db.tx() as t:
         t.execute("DELETE FROM users WHERE id = ?", (uid,))
     return {"ok": True}
@@ -631,6 +833,7 @@ async def admin_settings(request: Request):
 
 
 MODEL_RE = re.compile(r"^[A-Za-z0-9._:/\-]{3,120}$")
+GOOGLE_ID_RE = re.compile(r"^[A-Za-z0-9\-_.]{5,150}\.apps\.googleusercontent\.com$")
 INT_SETTINGS = {"free_ai_per_day": (0, 5000), "pro_ai_per_day": (1, 50000), "max_per_day": (0, 300), "max_per_hour": (0, 30),
                 "min_version_github": (0, 10 ** 7), "min_version_play": (0, 10 ** 7)}
 
@@ -671,9 +874,26 @@ async def admin_save_settings(request: Request):
         if url and not url.startswith("https://"):
             raise ApiError(400, "The Google Play link must start with https://", "bad_url")
         changes["play_url"] = url
+    if "google_client_id" in b:
+        gid = text(b.get("google_client_id"), 200).strip("\"' ")
+        if gid and not GOOGLE_ID_RE.match(gid):
+            raise ApiError(400, "That does not look like a Google OAuth client ID (it ends with .apps.googleusercontent.com).",
+                           "bad_google")
+        changes["google_client_id"] = gid
+    if b.get("google_client_secret"):
+        secret = text(b["google_client_secret"], 200).strip("\"' ")
+        if len(secret) < 10 or any(c.isspace() for c in secret):
+            raise ApiError(400, "That does not look like a Google client secret.", "bad_google")
+        changes["google_client_secret"] = secret
+    if b.get("clear_google"):
+        changes["google_client_id"] = changes["google_client_secret"] = ""
     with db.tx() as t:
         for k, v in changes.items():
             t.execute("INSERT INTO settings(key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", (k, v))
+        if "google_client_id" in changes or "google_client_secret" in changes:   # a fixed client: try those again
+            t.execute("UPDATE drive_links SET error = '', error_code = '' WHERE error_code = 'setup'")
+    if "google_client_id" in changes or "google_client_secret" in changes:
+        drive.poke()
     return {"ok": True, "settings": settings_json()}
 
 
