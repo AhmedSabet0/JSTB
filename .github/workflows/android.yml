@@ -200,11 +200,17 @@ jobs:
           TAG: ${{ needs.build.outputs.release }}
           NAME: ${{ needs.build.outputs.name }}
         run: |
-          if gh release view "$TAG" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release upload "$TAG" dist/* --clobber -R "$GITHUB_REPOSITORY"   # a release made on github.com: add the files
-          else
-            gh release create "$TAG" dist/* --target "$GITHUB_SHA" --title "Auto Apply $NAME" --generate-notes -R "$GITHUB_REPOSITORY"
-          fi
+          # GitHub's API sometimes answers 500/502: try a few times (an existing release only gets the files added)
+          for try in 1 2 3 4 5; do
+            if gh release view "$TAG" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+              gh release upload "$TAG" dist/* --clobber -R "$GITHUB_REPOSITORY" && exit 0
+            else
+              gh release create "$TAG" dist/* --target "$GITHUB_SHA" --title "Auto Apply $NAME" --generate-notes -R "$GITHUB_REPOSITORY" && exit 0
+            fi
+            echo "Try $try failed; trying again in $((try * 15)) seconds"
+            sleep $((try * 15))
+          done
+          exit 1
 
       - name: Google Play upload set up?
         id: play
