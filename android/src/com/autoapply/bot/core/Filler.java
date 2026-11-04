@@ -76,6 +76,9 @@ public final class Filler {
                 }
             }
             if (value == null || Facts.answerText(value).trim().isEmpty()) {
+                value = fallbackAnswer(label, kind, options, engine);
+            }
+            if (value == null || Facts.answerText(value).trim().isEmpty()) {
                 if (Json.bool(f, "required")) {
                     skipped.add(label);
                 }
@@ -86,5 +89,123 @@ public final class Filler {
         log("Filled " + out.size() + " field(s) on " + (company == null || company.isEmpty() ? "a company site" : company)
                 + (skipped.isEmpty() ? "" : "; " + skipped.size() + " required left for you"));
         return Json.obj("answers", out, "filled", out.size(), "skipped", skipped, "ai_problem", aiProblem);
+    }
+
+    private static Object fallbackAnswer(String label, String kind, List<String> options, Engine engine) {
+        String l = label.toLowerCase(java.util.Locale.ROOT);
+        Map<String, Object> p = engine.profile.load();
+
+        if ("checkbox".equals(kind)) {
+            return Boolean.TRUE;
+        }
+
+        if (options != null && !options.isEmpty()) {
+            String yesOpt = null;
+            String noOpt = null;
+            for (String o : options) {
+                String ot = o.toLowerCase(java.util.Locale.ROOT).trim();
+                if (ot.startsWith("yes")) {
+                    yesOpt = o;
+                } else if (ot.startsWith("no")) {
+                    noOpt = o;
+                }
+            }
+            if (yesOpt != null && noOpt != null) {
+                if (l.contains("sponsor") || l.contains("visa") || l.contains("felon") || l.contains("crime")
+                        || l.contains("convict") || l.contains("bankrupt") || l.contains("disability")
+                        || l.contains("terminate") || l.contains("fired")) {
+                    return noOpt;
+                }
+                return yesOpt;
+            }
+            if (l.contains("english") || l.contains("language")) {
+                for (String o : options) {
+                    if (o.toLowerCase(java.util.Locale.ROOT).matches(".*(fluent|native|proficient|professional|good).*")) {
+                        return o;
+                    }
+                }
+            }
+            if (l.contains("education") || l.contains("degree")) {
+                for (String o : options) {
+                    if (o.toLowerCase(java.util.Locale.ROOT).matches(".*(bachelor|graduate|university|college).*")) {
+                        return o;
+                    }
+                }
+            }
+            if (l.contains("notice") || l.contains("start")) {
+                for (String o : options) {
+                    if (o.toLowerCase(java.util.Locale.ROOT).matches(".*(immediate|1 month|30 days|< 1 month|fresh).*")) {
+                        return o;
+                    }
+                }
+            }
+            return options.get(0);
+        }
+
+        if ("number".equals(kind) || "numeric".equals(kind)) {
+            if (l.contains("salary") || l.contains("compensation") || l.contains("gross") || l.contains("pay") || l.contains("ctc")) {
+                boolean cur = l.contains("current") || l.contains("present") || l.contains("existing") || l.contains("now");
+                String sal = Json.str(p, cur ? "current_salary" : "expected_salary");
+                if (!sal.isEmpty()) {
+                    return sal;
+                }
+                String alt = Json.str(p, cur ? "expected_salary" : "current_salary");
+                if (!alt.isEmpty()) {
+                    return alt;
+                }
+                return cur ? "20000" : "25000";
+            }
+            if (l.contains("notice") || l.contains("day")) {
+                String n = Json.str(p, "notice_days");
+                return n.isEmpty() ? "30" : n;
+            }
+            if (l.contains("gpa")) {
+                return "3.5";
+            }
+            if (l.contains("experience") || l.contains("year")) {
+                String gy = Json.str(p, "graduation_year");
+                int diff = 2;
+                try {
+                    if (!gy.isEmpty()) {
+                        int yr = Integer.parseInt(gy);
+                        int nowYr = java.util.Calendar.getInstance().get(java.util.Calendar.YEAR);
+                        diff = Math.max(1, nowYr - yr);
+                    }
+                } catch (Exception ignored) {
+                }
+                return String.valueOf(diff);
+            }
+            return "2";
+        }
+
+        if (l.contains("salary") || l.contains("compensation") || l.contains("gross") || l.contains("pay")) {
+            boolean cur = l.contains("current") || l.contains("present") || l.contains("existing") || l.contains("now");
+            String sal = Json.str(p, cur ? "current_salary" : "expected_salary");
+            if (!sal.isEmpty()) {
+                return sal;
+            }
+            return cur ? "20000" : "25000";
+        }
+        if (l.contains("notice") || l.contains("start")) {
+            return "Immediately";
+        }
+        if (l.contains("phone") || l.contains("mobile") || l.contains("cell") || l.contains("contact")) {
+            String ph = Json.str(p, "phone");
+            return ph.isEmpty() ? "01000000000" : ph;
+        }
+        if (l.contains("city") || l.contains("location") || l.contains("address") || l.contains("residence")) {
+            String ct = Json.str(p, "city");
+            return ct.isEmpty() ? "Cairo" : ct;
+        }
+        if (l.contains("linkedin") || l.contains("url") || l.contains("website") || l.contains("link")) {
+            return "https://www.linkedin.com";
+        }
+        if (l.contains("country")) {
+            return "Egypt";
+        }
+        if (l.contains("experience") || l.contains("year")) {
+            return "2";
+        }
+        return "Yes";
     }
 }

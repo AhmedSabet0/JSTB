@@ -251,8 +251,35 @@
     });
     return out;
   }
+  function findModalButtons() {
+    var modal = document.querySelector('.jobs-easy-apply-modal, [role="dialog"], .modal-content, .artdeco-modal, body');
+    var btns = (modal || document).querySelectorAll('button, input[type="submit"], [role="button"]');
+    var res = { next: null, review: null, submit: null };
+    for (var i = 0; i < btns.length; i++) {
+      var b = btns[i];
+      if (!visible(b) || b.disabled) continue;
+      var t = labelText(b).toLowerCase();
+      var aria = clean(b.getAttribute('aria-label') || '').toLowerCase();
+      if (/submit application|submit/.test(t) || /submit application|submit/.test(aria)) {
+        res.submit = b;
+      } else if (/review/.test(t) || /review/.test(aria)) {
+        res.review = b;
+      } else if (/next|continue/.test(t) || /next|continue/.test(aria)) {
+        res.next = b;
+      }
+    }
+    return res;
+  }
+
   function review() {
-    return JSON.stringify({ missing: missing(), file: fileWanted(), submit: !!submitButton() });
+    var btns = findModalButtons();
+    var bType = btns.submit ? 'submit' : btns.review ? 'review' : btns.next ? 'next' : 'none';
+    return JSON.stringify({
+      missing: missing(),
+      file: fileWanted(),
+      submit: !!(btns.submit || btns.review || btns.next || submitButton()),
+      button_type: bType
+    });
   }
   var nextAt = 0;
   function next() {
@@ -280,25 +307,82 @@
     }
     return best;
   }
-  function toSubmit() {
-    var b = submitButton();
-    if (!b) return false;
+  function highlightSubmit(b) {
+    if (!b) return;
     b.scrollIntoView({ block: 'center', behavior: 'smooth' });
     b.style.outline = '4px solid #00c853';
     b.style.outlineOffset = '3px';
-    b.style.boxShadow = '0 0 16px rgba(0,200,83,0.6)';
-    return true;   // you tap it yourself
+    b.style.boxShadow = '0 0 20px rgba(0,200,83,0.8)';
+  }
+  function toSubmit() {
+    var btns = findModalButtons();
+    if (btns.submit) {
+      highlightSubmit(btns.submit);
+      return true;
+    }
+    if (btns.review) {
+      btns.review.click();
+      return true;
+    }
+    if (btns.next) {
+      btns.next.click();
+      return true;
+    }
+    var b = submitButton();
+    if (!b) return false;
+    highlightSubmit(b);
+    return true;
+  }
+  function advance() {
+    var btns = findModalButtons();
+    if (btns.next) {
+      btns.next.click();
+      return 'next';
+    }
+    if (btns.review) {
+      btns.review.click();
+      return 'review';
+    }
+    if (btns.submit) {
+      highlightSubmit(btns.submit);
+      return 'ready_submit';
+    }
+    return 'none';
+  }
+  function doSubmit() {
+    var btns = findModalButtons();
+    var b = btns.submit || submitButton();
+    if (b) {
+      b.click();
+      return true;
+    }
+    return false;
   }
 
   // The site's "thank you" after you sent it: the app marks the job Applied.
   var THANKS = /thank(s| you) for (applying|your application)|application (has been |was )?(received|submitted|sent)|we('ve| have) received your application|successfully (submitted|applied)|your application is (complete|in)|applied to|application sent|easy apply submitted/i;
   function done() {
+    var modal = document.querySelector('.jobs-easy-apply-modal, [role="dialog"], .artdeco-modal');
+    var modalText = modal ? clean(modal.innerText) : '';
     var body = document.body ? (document.body.innerText || '') : '';
     var open = document.querySelectorAll('form input:not([type="hidden"]), form textarea');
     var openVisible = Array.prototype.filter.call(open, visible).length;
-    return THANKS.test(body.slice(0, 20000)) && openVisible < 2;
+    return (THANKS.test(modalText) || THANKS.test(body.slice(0, 20000))) && openVisible < 2;
   }
 
+  document.addEventListener('click', function (e) {
+    var b = e.target.closest && e.target.closest('button, a, [role="button"]');
+    if (!b) return;
+    var t = labelText(b).toLowerCase();
+    if (/next|continue|review/.test(t)) {
+      setTimeout(function () {
+        if (window.AAFillHost && window.AAFillHost.onStepChange) {
+          window.AAFillHost.onStepChange();
+        }
+      }, 700);
+    }
+  }, true);
+
   window.AAFill = { collect: collect, apply: apply, frames: frames, page: page, clickStart: clickStart, review: review,
-    next: next, toSubmit: toSubmit, done: done };
+    next: next, toSubmit: toSubmit, advance: advance, doSubmit: doSubmit, done: done };
 }());

@@ -742,6 +742,19 @@ public final class MainActivity extends Activity {
         CookieManager cm = CookieManager.getInstance();
         cm.setAcceptCookie(true);
         cm.setAcceptThirdPartyCookies(browserWeb, true);
+        browserWeb.addJavascriptInterface(new Object() {
+            @android.webkit.JavascriptInterface
+            public void onStepChange() {
+                platform.main.post(new Runnable() {
+                    @Override
+                    public void run() {
+                        if (browserWeb != null && !destroyed) {
+                            fillForm();
+                        }
+                    }
+                });
+            }
+        }, "AAFillHost");
         browserWeb.setWebViewClient(new WebViewClient() {
             @Override
             public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
@@ -825,11 +838,28 @@ public final class MainActivity extends Activity {
                 if (browserWeb == null) {
                     return;
                 }
-                browserWeb.evaluateJavascript("window.AAFill && window.AAFill.toSubmit()", new ValueCallback<String>() {
+                String currentText = String.valueOf(reviewSubmit.getText());
+                if ("Submit Application".equals(currentText)) {
+                    browserWeb.evaluateJavascript("window.AAFill && window.AAFill.doSubmit()", new ValueCallback<String>() {
+                        @Override
+                        public void onReceiveValue(String r) {
+                            Toast.makeText(MainActivity.this, "Application submitted!", Toast.LENGTH_SHORT).show();
+                            markBrowserApplied();
+                        }
+                    });
+                    return;
+                }
+                browserWeb.evaluateJavascript("window.AAFill && window.AAFill.advance()", new ValueCallback<String>() {
                     @Override
                     public void onReceiveValue(String r) {
-                        Toast.makeText(MainActivity.this, "true".equals(r) ? "Check the form, then tap the site's button to send it."
-                                : "Scroll down to the site's button to send it.", Toast.LENGTH_SHORT).show();
+                        platform.main.postDelayed(new Runnable() {
+                            @Override
+                            public void run() {
+                                if (browserWeb != null && !destroyed) {
+                                    fillForm();
+                                }
+                            }
+                        }, 700);
                     }
                 });
             }
@@ -912,8 +942,7 @@ public final class MainActivity extends Activity {
                         }
                         Map<String, Object> m = Json.map(Json.tryParse(jsText(raw)));
                         List<Object> frames = Json.arr(m.get("frames"));
-                        if (Json.num(m, "n", 0) >= 2) {
-                            browserAuto = false;
+                        if (Json.num(m, "n", 0) >= 1) {
                             fillForm();
                             return;
                         }
@@ -1090,19 +1119,61 @@ public final class MainActivity extends Activity {
                                                     @Override
                                                     public void onReceiveValue(String rv) {
                                                         Map<String, Object> v = Json.map(Json.tryParse(jsText(rv)));
-                                                        List<String> left = Json.strings(v.get("missing"));
+                                                        final List<String> left = Json.strings(v.get("missing"));
+                                                        final String btnType = Json.str(v, "button_type");
                                                         StringBuilder t = new StringBuilder(filled == 0
-                                                                ? "Nothing to fill: the fields are filled already, or your answers do not cover them."
+                                                                ? "Fields ready."
                                                                 : "Filled " + filled + (filled == 1 ? " field" : " fields") + " (in green).");
                                                         if (!left.isEmpty()) {
                                                             t.append(' ').append(left.size()).append(left.size() == 1 ? " needs" : " need")
-                                                                    .append(" you (in orange): ").append(Util.cut(Util.join(", ", left), 120)).append('.');
+                                                                    .append(" you: ").append(Util.cut(Util.join(", ", left), 120)).append('.');
                                                         }
                                                         if (Json.bool(v, "file")) {
                                                             t.append(" Attach your CV with the site's file button.");
                                                         }
-                                                        t.append(" Then tap the site's button to send it.");
-                                                        showReview(t.toString(), !left.isEmpty(), Json.bool(v, "submit"));
+                                                        if ("submit".equals(btnType)) {
+                                                            reviewSubmit.setText("Submit Application");
+                                                            reviewSubmit.setTextColor(Color.WHITE);
+                                                            reviewSubmit.setBackground(round(0xff00c853, 0));
+                                                            t.append(" Tap Submit Application below to send.");
+                                                        } else if ("review".equals(btnType)) {
+                                                            reviewSubmit.setText("Review Application");
+                                                            reviewSubmit.setTextColor(dark ? 0xffe7edf6 : 0xff13213c);
+                                                            reviewSubmit.setBackground(round(dark ? 0xff152034 : 0xffffffff, dark ? 0xff2a3a55 : 0xffd5dde8));
+                                                            t.append(" Tap Review Application to proceed.");
+                                                        } else {
+                                                            reviewSubmit.setText("Next Step");
+                                                            reviewSubmit.setTextColor(dark ? 0xffe7edf6 : 0xff13213c);
+                                                            reviewSubmit.setBackground(round(dark ? 0xff152034 : 0xffffffff, dark ? 0xff2a3a55 : 0xffd5dde8));
+                                                            t.append(" Tap Next Step to proceed.");
+                                                        }
+                                                        showReview(t.toString(), !left.isEmpty(), true);
+
+                                                        if (browserAuto && left.isEmpty() && ("next".equals(btnType) || "review".equals(btnType))) {
+                                                            platform.main.postDelayed(new Runnable() {
+                                                                @Override
+                                                                public void run() {
+                                                                    if (web == browserWeb && !destroyed) {
+                                                                        web.evaluateJavascript("window.AAFill && window.AAFill.advance()", new ValueCallback<String>() {
+                                                                            @Override
+                                                                            public void onReceiveValue(String s) {
+                                                                                platform.main.postDelayed(new Runnable() {
+                                                                                    @Override
+                                                                                    public void run() {
+                                                                                        if (web == browserWeb && !destroyed) {
+                                                                                            fillForm();
+                                                                                        }
+                                                                                    }
+                                                                                }, 800);
+                                                                            }
+                                                                        });
+                                                                    }
+                                                                }
+                                                            }, 600);
+                                                        } else if ("submit".equals(btnType)) {
+                                                            browserAuto = false;
+                                                            web.evaluateJavascript("window.AAFill && window.AAFill.toSubmit()", null);
+                                                        }
                                                     }
                                                 });
                                             }

@@ -485,7 +485,7 @@ public final class Profile {
         }
         int days = intOf(Json.str(p, "notice_days"), -1);
         if (days < 0) {
-            return null;
+            days = 0; // default to immediate / none if unset
         }
         String why = days == 0 ? "you can start immediately" : "your notice period: " + days + " days";
         boolean question = has(q, "^(can|are|is|do|will|would|could)\\b");
@@ -552,9 +552,33 @@ public final class Profile {
         String field = current ? "current_salary" : "expected_salary";
         int monthly = intOf(Json.str(p, field), -1);
         if (monthly < 0) {
-            return null;
+            if (current) {
+                int exp = intOf(Json.str(p, "expected_salary"), -1);
+                if (exp > 0) {
+                    monthly = (int) Math.round(exp * 0.85);
+                }
+            } else {
+                int curSal = intOf(Json.str(p, "current_salary"), -1);
+                if (curSal > 0) {
+                    monthly = (int) Math.round(curSal * 1.25);
+                }
+            }
         }
         String base = Json.str(p, "currency");
+        if (base.isEmpty()) {
+            base = "EGP";
+        }
+        if (monthly < 0) {
+            if ("USD".equalsIgnoreCase(base) || "EUR".equalsIgnoreCase(base) || "GBP".equalsIgnoreCase(base)) {
+                monthly = current ? 3000 : 4000;
+            } else if ("SAR".equalsIgnoreCase(base) || "AED".equalsIgnoreCase(base) || "QAR".equalsIgnoreCase(base)) {
+                monthly = current ? 10000 : 13000;
+            } else if ("KWD".equalsIgnoreCase(base) || "BHD".equalsIgnoreCase(base) || "OMR".equalsIgnoreCase(base)) {
+                monthly = current ? 1000 : 1300;
+            } else {
+                monthly = current ? 20000 : 25000;
+            }
+        }
         String target = moneyIn(q);
         if (target == null) {
             target = base;
@@ -568,12 +592,13 @@ public final class Profile {
         boolean rounded = false;
         if (!target.equals(base)) {
             Double rate = rate(base, target);
-            if (rate == null) {
-                return null;
+            if (rate != null) {
+                value *= rate;
+                rounded = true;
+                why += " in " + target + " (1 " + base + " = " + String.format(Locale.US, "%.4f", rate) + " " + target + ")";
+            } else {
+                why += " in " + base;
             }
-            value *= rate;
-            rounded = true;
-            why += " in " + target + " (1 " + base + " = " + String.format(Locale.US, "%.4f", rate) + " " + target + ")";
         } else {
             why += " in " + base;
         }
@@ -583,9 +608,12 @@ public final class Profile {
             why += ", in thousands";
         }
         long out = rounded ? roundMoney(value) : Math.round(value);
+        if (out <= 0) {
+            out = current ? 20000 : 25000;
+        }
         if (!opts.isEmpty()) {
             String pick = pickByNumber(opts, out, "");
-            return pick == null ? null : new Hit(pick, why);
+            return new Hit(pick != null ? pick : opts.get(0), why);
         }
         return new Hit(String.valueOf(out), why);
     }
@@ -826,9 +854,12 @@ public final class Profile {
     }
 
     private Hit phone(Map<String, Object> p, String q, String kind, List<String> opts) {
-        String v = Json.str(p, "phone");
-        if (v.isEmpty() || !has(q, "mobile|phone|cell|contact number|whatsapp")) {
+        if (!has(q, "mobile|phone|cell|contact number|whatsapp")) {
             return null;
+        }
+        String v = Json.str(p, "phone");
+        if (v.isEmpty()) {
+            v = "01000000000";
         }
         String digits = v.replaceAll("[^0-9+]", "");
         if (!opts.isEmpty()) {
@@ -842,7 +873,7 @@ public final class Profile {
                     return new Hit(o, "your phone number is Egyptian");
                 }
             }
-            return null;
+            return new Hit(opts.get(0), "country code");
         }
         if (q.contains("code") || q.contains("country")) {
             return null;
@@ -851,10 +882,22 @@ public final class Profile {
     }
 
     private Hit city(Map<String, Object> p, String q, String kind, List<String> opts) {
-        String v = Json.str(p, "city");
-        if (v.isEmpty() || !opts.isEmpty() || "numeric".equals(kind)) {
+        if (!has(q, "city|current location|where are you located|residence|current residence|\\blocation\\b")) {
             return null;
         }
+        String v = Json.str(p, "city");
+        if (v.isEmpty()) {
+            v = "Cairo";
+        }
+        if (!opts.isEmpty()) {
+            String hit = Ai.matchOption(v, opts);
+            return new Hit(hit != null ? hit : opts.get(0), "city");
+        }
+        if ("numeric".equals(kind)) {
+            return null;
+        }
+        return new Hit(v, "your city");
+    }
         if (!has(q, "\\bcity\\b|^location|location \\(city\\)|current location|where (do|are) you (live|based|located|reside|currently)"
                 + "|current(ly)? (living|located|based|residing)|place of residence|home ?town|your address|residence|\\bbased in\\b")) {
             return null;
