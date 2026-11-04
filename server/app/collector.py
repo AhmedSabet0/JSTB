@@ -216,52 +216,105 @@ async def extract_keywords_from_cv(cv_text: str) -> List[str]:
     return fallback_titles if fallback_titles else ["Software Engineer"]
 
 
-async def score_job_for_user(cv_text: str, job: Dict[str, Any]) -> Tuple[int, str]:
-    """Scores match between candidate CV and job posting (0-100%). Returns (score, why)."""
-    settings = {r["key"]: r["value"] for r in db.conn().execute("SELECT key, value FROM settings").fetchall()}
-    key = settings.get("openrouter_key", "").strip()
-    model = settings.get("model", "openai/gpt-4o-mini").strip()
+STOPWORDS = {
+    "and", "or", "the", "in", "at", "of", "to", "for", "with", "a", "an", "on", "by",
+    "from", "as", "is", "senior", "junior", "mid", "lead", "staff", "principal",
+    "entry", "level", "specialist", "officer", "associate", "intern", "trainee"
+}
 
-    title = job.get("title", "")
-    company = job.get("company", "")
-    loc = job.get("location", "")
 
-    if key and cv_text:
-        prompt = (
-            "You are an AI recruiter. Evaluate candidate CV fit for this job on a scale of 0 to 100.\n\n"
-            f"Job Title: {title}\n"
-            f"Company: {company}\n"
-            f"Location: {loc}\n\n"
-            f"Candidate CV Summary:\n{cv_text[:2500]}\n\n"
-            "Return JSON only: {\"score\": 85, \"why\": \"1-2 concise sentences in English explaining the match reason.\"}\n"
-            "Score must be an integer between 0 and 100."
-        )
-        try:
-            res = await ai.chat(
-                key=key,
-                model=model,
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=150,
-                temperature=0.2,
-            )
-            content = res["choices"][0]["message"]["content"].strip()
-            if "```" in content:
-                content = re.sub(r"^```[a-z]*\s*", "", content)
-                content = re.sub(r"\s*```$", "", content)
-            parsed = json.loads(content)
-            score = int(parsed.get("score", 50))
-            why = str(parsed.get("why", "")).strip()[:240]
-            score = max(0, min(100, score))
-            return score, why
-        except Exception as e:
-            logger.debug(f"AI scoring failed: {e}. Using heuristic scoring.")
+def score_job_for_user(
+    cv_text: str,
+    job: Dict[str, Any],
+    user_keywords: Optional[List[str]] = None,
+    user_location: str = "Egypt",
+) -> Tuple[int, str]:
+    """Calculates deterministic algorithmic match score (0-100%) purely in code (no AI).
 
-    # Fast heuristic scoring based on keyword overlap
-    words_title = set(re.findall(r"\w+", title.lower()))
+    Measures keyword match between job title/tags and candidate CV + target keywords.
+    Threshold for a valid match is >= 60%.
+    """
+    title = str(job.get("title") or "").strip()
+    company = str(job.get("company") or "").strip()
+    job_loc = str(job.get("location") or "").strip().lower()
+
+    if not cv_text or not title:
+        return 0, "No CV text available for evaluation."
+
     cv_lower = cv_text.lower()
-    matches = sum(1 for w in words_title if len(w) > 2 and w in cv_lower)
-    score = min(95, max(40, 50 + matches * 15))
-    why = f"Matches {matches} core technical keywords from your CV for '{title}'."
+    title_lower = title.lower()
+    title_words = [w for w in re.findall(r"[a-z0-9+#.]+", title_lower) if len(w) > 2]
+    core_title_words = [w for w in title_words if w not in STOPWORDS]
+
+    score = 0
+    match_reasons = []
+
+    # 1. User Target Keyword Match (up to 55 points)
+    best_kw_score = 0
+    matched_kw_name = ""
+    if user_keywords:
+        for kw in user_keywords:
+            kw_clean = kw.strip().lower()
+            if not kw_clean:
+                continue
+            # Full phrase match (e.g. "network engineer" in "senior network engineer")
+            if kw_clean in title_lower:
+                best_kw_score = 55
+                matched_kw_name = kw
+                break
+            # Word-by-word match
+            kw_words = [w for w in re.findall(r"[a-z0-9+#.]+", kw_clean) if len(w) > 2 and w not in STOPWORDS]
+            if kw_words:
+                matched_count = sum(1 for w in kw_words if w in title_lower)
+                kw_ratio = matched_count / len(kw_words)
+                current_score = int(kw_ratio * 45)
+                if current_score > best_kw_score:
+                    best_kw_score = current_score
+                    matched_kw_name = kw
+
+    score += best_kw_score
+    if matched_kw_name and best_kw_score >= 35:
+        match_reasons.append(f"Direct match for your role '{matched_kw_name}'")
+
+    # 2. Core Job Title Words in CV Text (up to 30 points)
+    if core_title_words:
+        cv_matches = sum(1 for w in core_title_words if w in cv_lower)
+        cv_ratio = cv_matches / len(core_title_words)
+        title_points = int(cv_ratio * 30)
+        score += title_points
+        if cv_matches > 0:
+            match_reasons.append(f"{cv_matches}/{len(core_title_words)} title keywords verified in your CV")
+    else:
+        if best_kw_score > 0:
+            score += 15
+
+    # 3. Technical Terms & Skills Overlap in CV (up to 10 points)
+    repeated_matches = 0
+    for w in core_title_words:
+        if cv_lower.count(w) >= 2:
+            repeated_matches += 1
+    if repeated_matches >= 2:
+        score += 10
+        match_reasons.append("High skill occurrence in your experience")
+    elif repeated_matches == 1:
+        score += 5
+
+    # 4. Location Match (up to 5 points)
+    user_loc_clean = user_location.lower().strip()
+    if user_loc_clean and (
+        user_loc_clean in job_loc
+        or "remote" in job_loc
+        or ("egypt" in user_loc_clean and ("cairo" in job_loc or "giza" in job_loc or "alexandria" in job_loc))
+    ):
+        score += 5
+
+    score = max(0, min(98, score))
+
+    if not match_reasons:
+        why = f"Algorithmic keyword score {score}% based on CV text overlap."
+    else:
+        why = " • ".join(match_reasons)
+
     return score, why
 
 
@@ -272,6 +325,22 @@ def get_user_cv_text(user_id: int) -> str:
         if rec and rec.get("data") and isinstance(rec["data"], dict):
             return str(rec["data"].get("text", ""))
     return ""
+
+
+def get_user_keywords(user_id: int) -> List[str]:
+    """Retrieves active search keywords stored for this user."""
+    c = db.conn()
+    rows = c.execute("SELECT keyword FROM user_keywords WHERE user_id = ?", (user_id,)).fetchall()
+    return [r["keyword"] for r in rows]
+
+
+def get_user_location(user_id: int) -> str:
+    """Retrieves preferred location for this user."""
+    with db.tx() as t:
+        cfg = records.current(t, user_id, "settings", "LOCATION")
+        if cfg and cfg.get("data") and cfg["data"].get("v"):
+            return str(cfg["data"]["v"])
+    return "Egypt"
 
 
 async def process_user_cv(user_id: int, cv_text: Optional[str] = None) -> List[str]:
@@ -312,6 +381,56 @@ async def process_user_cv(user_id: int, cv_text: Optional[str] = None) -> List[s
             await save_and_match_jobs(jobs, kw, loc)
         except Exception as e:
             logger.warning(f"Error fetching initial jobs for user {user_id} kw {kw}: {e}")
+
+    # Evaluate any existing jobs in server_jobs against this user's profile
+    try:
+        existing_jobs = db.conn().execute(
+            "SELECT id, title, company, location, url, posted_date FROM server_jobs ORDER BY collected_at DESC LIMIT 150"
+        ).fetchall()
+        copilot_changes = []
+        for ej in existing_jobs:
+            job_id = ej["id"]
+            already = db.conn().execute(
+                "SELECT 1 FROM user_job_matches WHERE user_id = ? AND job_id = ?",
+                (user_id, job_id),
+            ).fetchone()
+            if already:
+                continue
+            j_dict = dict(ej)
+            score, why = score_job_for_user(cv_text, j_dict, user_keywords=keywords[:4], user_location=loc)
+            if score >= 60:
+                with db.tx() as t:
+                    t.execute(
+                        """
+                        INSERT INTO user_job_matches(user_id, job_id, score, why, status, updated_at)
+                        VALUES (?, ?, ?, ?, 'new', ?)
+                        ON CONFLICT(user_id, job_id) DO UPDATE SET score=excluded.score, why=excluded.why, updated_at=excluded.updated_at
+                        """,
+                        (user_id, job_id, score, why, now),
+                    )
+                copilot_record_data = {
+                    "id": f"li:{job_id}",
+                    "url": j_dict["url"],
+                    "title": j_dict["title"],
+                    "company": j_dict["company"],
+                    "channel": "linkedin",
+                    "source": "server_match",
+                    "added": now,
+                    "state": "new",
+                    "stage": "",
+                    "fit": max(1, min(10, round(score / 10))),
+                    "score": score,
+                    "why": why,
+                    "location": j_dict.get("location", ""),
+                    "posted_date": j_dict.get("posted_date", ""),
+                }
+                copilot_changes.append(("copilot", f"li:{job_id}", copilot_record_data, now))
+
+        if copilot_changes:
+            with db.tx() as t:
+                records.write(t, user_id, copilot_changes, "server")
+    except Exception as e:
+        logger.warning(f"Error matching existing jobs for user {user_id}: {e}")
 
     return keywords
 
@@ -360,6 +479,8 @@ async def save_and_match_jobs(jobs: List[Dict[str, Any]], keyword: str, location
         cv_text = get_user_cv_text(uid)
         if not cv_text:
             continue
+        user_kws = get_user_keywords(uid)
+        user_loc = get_user_location(uid)
 
         copilot_changes = []
         for j in jobs:
@@ -373,7 +494,7 @@ async def save_and_match_jobs(jobs: List[Dict[str, Any]], keyword: str, location
             if existing is not None:
                 continue
 
-            score, why = await score_job_for_user(cv_text, j)
+            score, why = score_job_for_user(cv_text, j, user_keywords=user_kws, user_location=user_loc)
             if score >= 60:
                 with db.tx() as t:
                     t.execute(
