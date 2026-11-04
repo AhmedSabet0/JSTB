@@ -1097,7 +1097,8 @@ def login_url(purpose, app_challenge="", device="", user_id=0):
     for deleting an account on the web (purpose delete: only who you are)."""
     s = db.settings()
     if not configured(s):
-        raise DriveError("off", "Google sign-in is not set up on the server yet.")
+        raise DriveError("off", "Sign in with Google is not set up on the server yet: the admin adds the Google client in "
+                                "the admin page (Settings > Google Drive).")
     state = secrets.token_urlsafe(32)
     verifier = secrets.token_urlsafe(48)
     challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).decode().rstrip("=")

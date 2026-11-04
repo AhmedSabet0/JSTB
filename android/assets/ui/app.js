@@ -246,7 +246,7 @@
   }
 
   // Sign in with Google comes first when the server offers it (and has its address built in).
-  const googleFirst = () => !!acc().google_signin && !!acc().server_built_in && !acc().signed_in;
+  const googleFirst = () => !!acc().server_built_in && !acc().signed_in && !emailAllowed();   // Google only
   let welcomeInfo = false;
   function wShow(step) {
     wStep = step;
@@ -279,7 +279,6 @@
     backBtn.hidden = wStep === 'welcome';
     backBtn.textContent = 'Back';
     const g1 = wStep === 'welcome' && googleFirst();
-    $('w-welcome-email').hidden = !g1;
     $('w-welcome-acc').textContent = googleFirst() ? 'Sign in with Google' : 'Create your account';
     const labels = { welcome: g1 ? 'Continue with Google' : 'Get started', account: accLabel(), cv: 'Continue', answers: 'Save and continue',
       jobs: 'Continue', linkedin: s.signed_in ? 'Continue' : 'Skip for now', done: auto() ? 'Start applying' : 'Find jobs' };
@@ -326,8 +325,11 @@
   let accMode = 'signup';
   let accInfoAsked = false;
   const acc = () => (state && state.account) || {};
+  // Google only, unless the admin allows email accounts too (Settings > New accounts with an email and a password).
+  const emailAllowed = () => !!acc().google_signin && acc().password_signups === true;
   function accLabel() {
     if (acc().signed_in) return 'Continue';
+    if (!emailAllowed()) return 'Continue with Google';
     return accMode === 'signup' ? 'Create account' : 'Sign in';
   }
   function setAccMode(mode) {
@@ -337,9 +339,12 @@
     $('w-acc-name-field').hidden = mode !== 'signup';
     $('w-acc-pw').autocomplete = mode === 'signup' ? 'new-password' : 'current-password';
     $('w-acc-pw-hint').hidden = mode !== 'signup';
-    $('w-acc-title').textContent = google() && !pwSignups() ? 'Your account' : mode === 'signup' ? 'Create your account' : 'Sign in';
-    $('w-acc-seg').hidden = !pwSignups();
-    $('w-google-box').hidden = !google();
+    const em = emailAllowed();
+    $('w-acc-title').textContent = em ? (mode === 'signup' ? 'Create your account' : 'Sign in') : 'Sign in with Google';
+    $('w-email-box').hidden = !em;       // accounts are made and opened with Google only
+    $('w-google-box').hidden = false;
+    $('w-google').hidden = !em;          // Google only: the big button at the bottom is Continue with Google
+    $('w-or').hidden = !em;
     $('w-acc-err').hidden = true;
     accHelp();
     wLive();
@@ -358,8 +363,7 @@
     $('w-acc-form').hidden = !!a.signed_in;
     $('w-acc-who').textContent = a.email || '';
     $('w-acc-lead').textContent = a.signed_in ? 'You are signed in. Continue to add your CV.'
-      : google() && !pwSignups() ? 'Continue with Google to make your account, or to sign in. It connects the AI that reads jobs and fills in forms.'
-        : 'Your account connects the AI that reads jobs and fills in forms. No AI key needed.';
+      : 'Continue with Google to make your account or to sign in. It connects the AI that reads jobs and fills in forms, and keeps your data in your Google Drive.';
     if (a.signed_in) { $('w-acc-title').textContent = 'Your account'; return; }
     $('w-acc-server-field').hidden = !!a.server_built_in;
     if (!a.server_built_in && !$('w-acc-server').value) $('w-acc-server').value = (a.server || '').replace(/^https:\/\//, '');
@@ -417,7 +421,7 @@
     }
   }
   $('w-google').addEventListener('click', () => googleStart('account'));
-  $('w-welcome-email').addEventListener('click', () => wShow('account'));
+
   // Back in the app while a Google sign-in waits, without the link (the browser did not open the app): the app asks
   // the server whether Google's page is done. The link, when it comes, is handled first.
   let googleClaiming = false;
@@ -457,6 +461,7 @@
   async function wAccount() {
     const a = acc();
     if (a.signed_in) { await afterSignIn(!state.setup.has_cv); return; }
+    if (!emailAllowed()) { await googleStart('account'); return; }   // Google only
     const err = $('w-acc-err');
     err.hidden = true;
     const body = { email: $('w-acc-email').value.trim(), password: $('w-acc-pw').value };

@@ -42,7 +42,6 @@
       <p class="muted">Takes about 3 minutes.</p>
       <p id="w-welcome-wait" class="note" hidden>Choose your Google account in the browser, then come back here.</p>
       <p id="w-welcome-err" class="error-msg" hidden></p>
-      <button id="w-welcome-email" class="linklike center-link" type="button" hidden>Use an email and a password instead</button>
     </div>
 
     <div class="step" data-step="account">
@@ -64,8 +63,9 @@
           <p class="hint">Your Google account also keeps your CV, answers and jobs in an <b>Auto Apply</b> folder in your Drive,
             so a new phone gets them back. The app sees only the files it makes there.</p>
           <p id="w-google-wait" class="note" hidden>Choose your Google account in the browser, then come back here.</p>
-          <div class="or-line" id="w-or"><span>or sign in with your email</span></div>
+          <div class="or-line" id="w-or" hidden><span>or sign in with your email</span></div>
         </div>
+        <div id="w-email-box" hidden>
         <div class="seg acc-seg" id="w-acc-seg" role="tablist" aria-label="Account">
           <button type="button" data-accmode="signup" class="on">I'm new</button>
           <button type="button" data-accmode="login">I have an account</button>
@@ -77,6 +77,7 @@
         <div class="field"><label for="w-acc-pw">Password</label>
           <input id="w-acc-pw" type="password" autocomplete="new-password">
           <p class="hint" id="w-acc-pw-hint">At least 8 characters.</p></div>
+        </div>
         <p id="w-acc-note" class="note" hidden></p>
         <p id="w-acc-err" class="error-msg" hidden></p>
         <p id="w-acc-help" class="hint" hidden></p>

@@ -64,7 +64,7 @@ English (United States), App, Free. Accept the declarations.
 |---|---|
 | Privacy policy | `https://DOMAIN/privacy` |
 | Ads | No |
-| App access | All or some functionality is restricted: add a reviewer account with an email and a password (new accounts are made with Google, so in the admin page turn on **New accounts with an email and a password**, create the account in the app, turn it off again, and turn the account's **Pro** on) with the note below |
+| App access | All or some functionality is restricted: add a reviewer account with an email and a password (new accounts are made with Google, so in the admin page turn on **New accounts with an email and a password**, create the account in the app and turn its **Pro** on; keep the switch on while the app is in review, since the app shows the email form only while it is on) with the note below |
 | Content rating | Category: Utility, Productivity, Communication or Other. Answer No to everything |
 | Target audience | 18 and over |
 | News app / Government / Financial features / Health | No / No / none / none |
