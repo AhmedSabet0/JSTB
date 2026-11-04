@@ -16,7 +16,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import httpx
 from bs4 import BeautifulSoup
 
-from app import ai, db, records
+from app import ai, db, drive, records
 
 logger = logging.getLogger("autoapply.collector")
 
@@ -238,10 +238,13 @@ def score_job_for_user(
     company = str(job.get("company") or "").strip()
     job_loc = str(job.get("location") or "").strip().lower()
 
-    if not cv_text or not title:
-        return 0, "No CV text available for evaluation."
+    if not title:
+        return 0, "No job title available for evaluation."
 
-    cv_lower = cv_text.lower()
+    if not cv_text and not user_keywords:
+        return 0, "No CV text or target keywords available for evaluation."
+
+    cv_lower = (cv_text or "").lower()
     title_lower = title.lower()
     title_words = [w for w in re.findall(r"[a-z0-9+#.]+", title_lower) if len(w) > 2]
     core_title_words = [w for w in title_words if w not in STOPWORDS]
@@ -277,7 +280,7 @@ def score_job_for_user(
         match_reasons.append(f"Direct match for your role '{matched_kw_name}'")
 
     # 2. Core Job Title Words in CV Text (up to 30 points)
-    if core_title_words:
+    if cv_lower and core_title_words:
         cv_matches = sum(1 for w in core_title_words if w in cv_lower)
         cv_ratio = cv_matches / len(core_title_words)
         title_points = int(cv_ratio * 30)
@@ -285,19 +288,20 @@ def score_job_for_user(
         if cv_matches > 0:
             match_reasons.append(f"{cv_matches}/{len(core_title_words)} title keywords verified in your CV")
     else:
-        if best_kw_score > 0:
+        if best_kw_score >= 45:
             score += 15
 
     # 3. Technical Terms & Skills Overlap in CV (up to 10 points)
-    repeated_matches = 0
-    for w in core_title_words:
-        if cv_lower.count(w) >= 2:
-            repeated_matches += 1
-    if repeated_matches >= 2:
-        score += 10
-        match_reasons.append("High skill occurrence in your experience")
-    elif repeated_matches == 1:
-        score += 5
+    if cv_lower:
+        repeated_matches = 0
+        for w in core_title_words:
+            if cv_lower.count(w) >= 2:
+                repeated_matches += 1
+        if repeated_matches >= 2:
+            score += 10
+            match_reasons.append("High skill occurrence in your experience")
+        elif repeated_matches == 1:
+            score += 5
 
     # 4. Location Match (up to 5 points)
     user_loc_clean = user_location.lower().strip()
@@ -328,10 +332,49 @@ def get_user_cv_text(user_id: int) -> str:
 
 
 def get_user_keywords(user_id: int) -> List[str]:
-    """Retrieves active search keywords stored for this user."""
+    """Retrieves active search keywords stored for this user.
+
+    Falls back to settings.KEYWORDS (configured job titles in mobile Profile) or CV text.
+    """
     c = db.conn()
     rows = c.execute("SELECT keyword FROM user_keywords WHERE user_id = ?", (user_id,)).fetchall()
-    return [r["keyword"] for r in rows]
+    kws = [r["keyword"].strip() for r in rows if r["keyword"] and r["keyword"].strip()]
+    if kws:
+        return kws
+
+    # Check settings record KEYWORDS (where the mobile app stores job titles from Profile)
+    found = []
+    with db.tx() as t:
+        cfg = records.current(t, user_id, "settings", "KEYWORDS")
+        if cfg and cfg.get("data") and cfg["data"].get("v"):
+            val = str(cfg["data"]["v"])
+            for line in re.split(r"[\r\n,]+", val):
+                s = line.strip()
+                if s and s not in found:
+                    found.append(s)
+
+    if not found:
+        # Check CV text for common roles
+        cv = get_user_cv_text(user_id)
+        if cv:
+            common = ["network engineer", "it support", "devops engineer", "system administrator", "software engineer", "cloud infrastructure"]
+            for role in common:
+                if role in cv.lower():
+                    found.append(role.title())
+
+    # Persist into user_keywords for fast future matching
+    if found:
+        loc = get_user_location(user_id)
+        now = time.time()
+        with db.tx() as t:
+            for kw in found[:6]:
+                t.execute(
+                    "INSERT OR IGNORE INTO user_keywords(user_id, keyword, location, created_at) VALUES (?, ?, ?, ?)",
+                    (user_id, kw, loc, now),
+                )
+        return found[:6]
+
+    return []
 
 
 def get_user_location(user_id: int) -> str:
@@ -435,8 +478,82 @@ async def process_user_cv(user_id: int, cv_text: Optional[str] = None) -> List[s
     return keywords
 
 
+async def match_jobs_for_all_users(jobs: List[Dict[str, Any]]) -> int:
+    """Evaluates a batch of jobs against all registered users and writes matches to records."""
+    if not jobs:
+        return 0
+    now = time.time()
+    matches_created = 0
+    with db.tx() as t:
+        users = t.execute("SELECT id, email FROM users").fetchall()
+
+    for u in users:
+        uid = u["id"]
+        cv_text = get_user_cv_text(uid)
+        user_kws = get_user_keywords(uid)
+        user_loc = get_user_location(uid)
+
+        if not cv_text and not user_kws:
+            continue
+
+        copilot_changes = []
+        for j in jobs:
+            job_id = j["id"]
+            existing = db.conn().execute(
+                "SELECT score, status FROM user_job_matches WHERE user_id = ? AND job_id = ?",
+                (uid, job_id),
+            ).fetchone()
+
+            if existing is not None:
+                continue
+
+            score, why = score_job_for_user(cv_text, j, user_keywords=user_kws, user_location=user_loc)
+            if score >= 60:
+                with db.tx() as t:
+                    t.execute(
+                        """
+                        INSERT INTO user_job_matches(user_id, job_id, score, why, status, updated_at)
+                        VALUES (?, ?, ?, ?, 'new', ?)
+                        ON CONFLICT(user_id, job_id) DO UPDATE SET
+                          score = excluded.score,
+                          why = excluded.why,
+                          updated_at = excluded.updated_at
+                        """,
+                        (uid, job_id, score, why, now),
+                    )
+
+                copilot_record_data = {
+                    "id": f"li:{job_id}",
+                    "url": j["url"],
+                    "title": j["title"],
+                    "company": j["company"],
+                    "channel": "linkedin",
+                    "source": "server_match",
+                    "added": now,
+                    "state": "new",
+                    "stage": "",
+                    "fit": max(1, min(10, round(score / 10))),
+                    "score": score,
+                    "why": why,
+                    "location": j.get("location", ""),
+                    "posted_date": j.get("posted_date", ""),
+                }
+                copilot_changes.append(("copilot", f"li:{job_id}", copilot_record_data, now))
+                matches_created += 1
+
+        if copilot_changes:
+            with db.tx() as t:
+                records.write(t, uid, copilot_changes, "server")
+            try:
+                drive.poke()
+            except Exception as e:
+                logger.debug(f"drive.poke() notice: {e}")
+
+    return matches_created
+
+
 async def save_and_match_jobs(jobs: List[Dict[str, Any]], keyword: str, location: str) -> int:
-    """Saves collected jobs into server_jobs and evaluates matches against all interested users.
+    """Saves collected jobs into server_jobs and evaluates matches against all users.
 
     Jobs matching with score >= 60% are recorded in user_job_matches AND added as copilot records
     so they seamlessly sync to the Android app and Google Drive!
@@ -462,75 +579,8 @@ async def save_and_match_jobs(jobs: List[Dict[str, Any]], keyword: str, location
             )
             new_jobs_count += 1
 
-    # 2. Find all users who have this keyword or relevant CV
-    with db.tx() as t:
-        users = t.execute(
-            """
-            SELECT DISTINCT u.id, u.email
-            FROM users u
-            JOIN user_keywords uk ON uk.user_id = u.id
-            WHERE LOWER(uk.keyword) = LOWER(?)
-            """,
-            (keyword,),
-        ).fetchall()
-
-    for u in users:
-        uid = u["id"]
-        cv_text = get_user_cv_text(uid)
-        if not cv_text:
-            continue
-        user_kws = get_user_keywords(uid)
-        user_loc = get_user_location(uid)
-
-        copilot_changes = []
-        for j in jobs:
-            job_id = j["id"]
-            # Check if user already scored or has this match
-            existing = db.conn().execute(
-                "SELECT score, status FROM user_job_matches WHERE user_id = ? AND job_id = ?",
-                (uid, job_id),
-            ).fetchone()
-
-            if existing is not None:
-                continue
-
-            score, why = score_job_for_user(cv_text, j, user_keywords=user_kws, user_location=user_loc)
-            if score >= 60:
-                with db.tx() as t:
-                    t.execute(
-                        """
-                        INSERT INTO user_job_matches(user_id, job_id, score, why, status, updated_at)
-                        VALUES (?, ?, ?, ?, 'new', ?)
-                        ON CONFLICT(user_id, job_id) DO UPDATE SET
-                          score = excluded.score,
-                          why = excluded.why,
-                          updated_at = excluded.updated_at
-                        """,
-                        (uid, job_id, score, why, now),
-                    )
-
-                # Format as a copilot record for mobile sync & Google Drive
-                copilot_record_data = {
-                    "id": f"li:{job_id}",
-                    "url": j["url"],
-                    "title": j["title"],
-                    "company": j["company"],
-                    "channel": "linkedin",
-                    "source": "server_match",
-                    "added": now,
-                    "state": "new",
-                    "stage": "",
-                    "fit": max(1, min(10, round(score / 10))),
-                    "score": score,
-                    "why": why,
-                    "location": j.get("location", ""),
-                    "posted_date": j.get("posted_date", ""),
-                }
-                copilot_changes.append(("copilot", f"li:{job_id}", copilot_record_data, now))
-
-        if copilot_changes:
-            with db.tx() as t:
-                records.write(t, uid, copilot_changes, "server")
+    # 2. Evaluate against all users
+    await match_jobs_for_all_users(jobs)
 
     return new_jobs_count
 
@@ -538,9 +588,19 @@ async def save_and_match_jobs(jobs: List[Dict[str, Any]], keyword: str, location
 async def run_collection_cycle() -> int:
     """Runs the periodic collection cycle for all distinct keywords in the database.
 
-    Runs hourly in the background.
+    Evaluates newly collected jobs as well as all existing jobs in server_jobs against all users.
     """
-    logger.info("Starting hourly LinkedIn guest job collection cycle...")
+    logger.info("Starting LinkedIn guest job collection cycle...")
+
+    # 1. Backfill user_keywords from settings for all users
+    try:
+        with db.tx() as t:
+            all_users = t.execute("SELECT id FROM users").fetchall()
+        for u in all_users:
+            get_user_keywords(u["id"])
+    except Exception as e:
+        logger.warning(f"Error backfilling user keywords: {e}")
+
     c = db.conn()
     queries = c.execute(
         """
@@ -564,9 +624,20 @@ async def run_collection_cycle() -> int:
             count = await save_and_match_jobs(jobs, kw, loc)
             total_collected += count
             # Polite pause between keyword searches to avoid rate limiting
-            await asyncio.sleep(random.uniform(4.0, 7.0))
+            await asyncio.sleep(random.uniform(3.0, 5.0))
         except Exception as e:
             logger.error(f"Error during job collection cycle for '{kw}': {e}", exc_info=True)
+
+    # 2. Evaluate existing stored jobs against all users to match immediately
+    try:
+        existing_jobs = db.conn().execute(
+            "SELECT id, title, company, location, url, posted_date FROM server_jobs ORDER BY collected_at DESC LIMIT 200"
+        ).fetchall()
+        jobs_list = [dict(r) for r in existing_jobs]
+        matched_count = await match_jobs_for_all_users(jobs_list)
+        logger.info(f"Evaluated existing stored jobs. Matched {matched_count} new job items.")
+    except Exception as e:
+        logger.error(f"Error matching existing jobs: {e}", exc_info=True)
 
     logger.info(f"Job collection cycle finished. Processed {total_collected} jobs.")
     return total_collected
