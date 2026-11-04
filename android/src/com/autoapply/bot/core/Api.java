@@ -882,7 +882,8 @@ public final class Api {
         if (what.equals("open")) {
             boolean linkedin = "linkedin".equals(Json.str(item, "channel"));
             Util.log("Opened " + (linkedin ? "on LinkedIn" : "on the company site") + ": " + Json.str(item, "title"));
-            engine.platform.openLink(Json.str(item, "url"), linkedin ? "linkedin" : "inapp", id, Json.str(item, "title"));
+            String how = linkedin ? "linkedin" : Json.bool(b, "fill") ? "inapp-fill" : "inapp";   // fill: Fill and review
+            engine.platform.openLink(Json.str(item, "url"), how, id, Json.str(item, "title"));
             return Json.obj("ok", true);
         }
         if (what.equals("letter")) {

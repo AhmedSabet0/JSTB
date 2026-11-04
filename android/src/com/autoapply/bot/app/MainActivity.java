@@ -597,6 +597,16 @@ public final class MainActivity extends Activity {
     private String browserJob = "";
     private String browserJobTitle = "";
     private boolean browserApplied;
+    /** Fill and review: the app opens the site's form (its Apply button, or the form's own frame) and fills it. */
+    private boolean browserAuto;
+    private boolean autoBusy;
+    private int autoTries;
+    /** A fill happened on this page: the site's thank-you page marks the job Applied. */
+    private boolean browserFilled;
+    private LinearLayout reviewBar;
+    private TextView reviewText;
+    private Button reviewNext;
+    private Button reviewSubmit;
     private String fitAsked = "";
     private String fillJs;
 
@@ -658,10 +668,18 @@ public final class MainActivity extends Activity {
     /** A company's job page in the app: Fill puts your answers in its form (you check them and send it yourself), and
      *  the file button offers your CV. `jobId` is the job in your list; without it, Save adds the page to your list. */
     void showBrowser(String url, String jobId, String title) {
+        showBrowser(url, jobId, title, false);
+    }
+
+    void showBrowser(String url, String jobId, String title, boolean auto) {
         closePanes();
         browserJob = jobId == null ? "" : jobId;
         browserJobTitle = title == null ? "" : title;
         browserApplied = false;
+        browserAuto = auto;
+        autoBusy = false;
+        autoTries = 0;
+        browserFilled = false;
         fitAsked = "";
         int bg = dark ? 0xff0d1420 : 0xffffffff;
         int ink = dark ? 0xffe7edf6 : 0xff13213c;
@@ -741,6 +759,11 @@ public final class MainActivity extends Activity {
                 browserProgress.setVisibility(View.INVISIBLE);
                 showBrowserPage(view);
                 readJobPage(view, url);
+                if (browserAuto && !browserFilled) {
+                    autoStep(view);
+                } else if (browserFilled) {
+                    checkThanks(view);
+                }
             }
         });
         browserWeb.setWebChromeClient(new WebChromeClient() {
@@ -770,6 +793,52 @@ public final class MainActivity extends Activity {
         View line = new View(this);
         line.setBackgroundColor(dark ? 0xff22304a : 0xffe2e8f0);
         browserPane.addView(line, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 1));
+
+        // Fill and review: what was filled, what needs you, and the way to the site's Submit (you tap it).
+        reviewBar = new LinearLayout(this);
+        reviewBar.setOrientation(LinearLayout.VERTICAL);
+        reviewBar.setPadding(dp(14), dp(10), dp(14), dp(2));
+        reviewBar.setBackgroundColor(dark ? 0xff111a2b : 0xfff6f8fb);
+        reviewBar.setVisibility(View.GONE);
+        reviewText = new TextView(this);
+        reviewText.setTextSize(14);
+        reviewText.setTextColor(ink);
+        reviewBar.addView(reviewText);
+        LinearLayout reviewRow = new LinearLayout(this);
+        reviewRow.setOrientation(LinearLayout.HORIZONTAL);
+        reviewRow.setPadding(0, dp(8), 0, 0);
+        reviewNext = barButton("Next to answer", false);
+        reviewNext.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                if (browserWeb != null) {
+                    browserWeb.evaluateJavascript("window.AAFill && window.AAFill.next()", null);
+                }
+            }
+        });
+        reviewSubmit = barButton("Go to Submit", false);
+        reviewSubmit.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                if (browserWeb == null) {
+                    return;
+                }
+                browserWeb.evaluateJavascript("window.AAFill && window.AAFill.toSubmit()", new ValueCallback<String>() {
+                    @Override
+                    public void onReceiveValue(String r) {
+                        Toast.makeText(MainActivity.this, "true".equals(r) ? "Check the form, then tap the site's button to send it."
+                                : "Scroll down to the site's button to send it.", Toast.LENGTH_SHORT).show();
+                    }
+                });
+            }
+        });
+        LinearLayout.LayoutParams r1 = new LinearLayout.LayoutParams(0, dp(44), 1);
+        LinearLayout.LayoutParams r2 = new LinearLayout.LayoutParams(0, dp(44), 1);
+        r2.leftMargin = dp(10);
+        reviewRow.addView(reviewNext, r1);
+        reviewRow.addView(reviewSubmit, r2);
+        reviewBar.addView(reviewRow);
+        browserPane.addView(reviewBar, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         LinearLayout bottom = new LinearLayout(this);
         bottom.setOrientation(LinearLayout.HORIZONTAL);
         bottom.setPadding(dp(12), dp(10), dp(12), dp(10));
@@ -800,7 +869,115 @@ public final class MainActivity extends Activity {
         browserPane.addView(bottom, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         paintBrowserButtons();
         root.addView(browserPane, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        if (auto) {
+            showReview("Opening the application form…", false, false);
+        }
         browserWeb.loadUrl(url);
+    }
+
+    private void showReview(String text, boolean next, boolean submit) {
+        if (reviewBar == null) {
+            return;
+        }
+        reviewBar.setVisibility(View.VISIBLE);
+        reviewText.setText(text);
+        reviewNext.setVisibility(next ? View.VISIBLE : View.GONE);
+        reviewSubmit.setVisibility(submit ? View.VISIBLE : View.GONE);
+        ((View) reviewNext.getParent()).setVisibility(next || submit ? View.VISIBLE : View.GONE);
+    }
+
+    /** Fill and review: the form on this page is filled; no form yet: the form's own frame, or the site's Apply
+     *  button (a few tries, for pages that draw the form after a moment). */
+    private void autoStep(final WebView view) {
+        if (view != browserWeb || autoBusy || !browserAuto) {
+            return;
+        }
+        autoBusy = true;
+        platform.main.postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                if (view != browserWeb || destroyed) {
+                    autoBusy = false;
+                    return;
+                }
+                view.evaluateJavascript(fillScript() + "\n;JSON.stringify({n: JSON.parse(window.AAFill.collect()).length, "
+                        + "frames: JSON.parse(window.AAFill.frames())})", new ValueCallback<String>() {
+                    @Override
+                    public void onReceiveValue(String raw) {
+                        autoBusy = false;
+                        if (view != browserWeb || destroyed) {
+                            return;
+                        }
+                        Map<String, Object> m = Json.map(Json.tryParse(jsText(raw)));
+                        List<Object> frames = Json.arr(m.get("frames"));
+                        if (Json.num(m, "n", 0) >= 2) {
+                            browserAuto = false;
+                            fillForm();
+                            return;
+                        }
+                        if (autoTries >= 4) {
+                            browserAuto = false;
+                            showReview("Open the application form on this page (the site's Apply button), then tap Fill the form.",
+                                    false, false);
+                            return;
+                        }
+                        autoTries++;
+                        if (!frames.isEmpty()) {
+                            view.loadUrl(String.valueOf(frames.get(0)));   // the page finishing calls this again
+                            return;
+                        }
+                        view.evaluateJavascript("window.AAFill.clickStart()", new ValueCallback<String>() {
+                            @Override
+                            public void onReceiveValue(String clicked) {
+                                String label = jsText(clicked);
+                                showReview(label.isEmpty() ? "Waiting for the form…" : "Opened the site's \"" + label + "\". Filling…",
+                                        false, false);
+                                platform.main.postDelayed(new Runnable() {
+                                    @Override
+                                    public void run() {
+                                        autoStep(view);    // the form may appear without a new page
+                                    }
+                                }, 1800);
+                            }
+                        });
+                    }
+                });
+            }
+        }, 900);
+    }
+
+    /** After a fill: the site's thank-you page means it was sent; the job is marked Applied. */
+    private void checkThanks(final WebView view) {
+        if (view != browserWeb || destroyed || browserApplied) {
+            return;
+        }
+        view.evaluateJavascript(fillScript() + "\n;window.AAFill.done()", new ValueCallback<String>() {
+            @Override
+            public void onReceiveValue(String r) {
+                if (view != browserWeb || destroyed || browserApplied || !"true".equals(r)) {
+                    return;
+                }
+                if (browserJob.isEmpty()) {
+                    showReview("Sent. Tap Save to my jobs to keep track of it.", false, false);
+                    return;
+                }
+                Toast.makeText(MainActivity.this, "Sent. Added to Applied.", Toast.LENGTH_SHORT).show();
+                markBrowserApplied();
+            }
+        });
+    }
+
+    private void watchThanks(final WebView view) {
+        platform.main.postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                if (view != browserWeb || destroyed || browserApplied) {
+                    return;
+                }
+                checkThanks(view);
+                watchThanks(view);      // pages that show it without loading a new page
+            }
+        }, 2500);
     }
 
     private void paintBrowserButtons() {
@@ -902,13 +1079,30 @@ public final class MainActivity extends Activity {
                                             @Override
                                             public void onReceiveValue(String n) {
                                                 fillDone();
-                                                int filled = (int) Json.num(Json.obj("n", Json.tryParse(n)), "n", 0);
-                                                String msg = filled == 0 ? "Nothing to fill here: the form's fields are filled already, or "
-                                                        + "your answers do not cover them."
-                                                        : "Filled " + filled + (filled == 1 ? " field" : " fields") + ". Check them"
-                                                        + (skipped.isEmpty() ? "" : ", answer " + skipped.size() + " more yourself")
-                                                        + ", attach your CV and send it.";
-                                                Toast.makeText(MainActivity.this, msg, Toast.LENGTH_LONG).show();
+                                                final int filled = (int) Json.num(Json.obj("n", Json.tryParse(n)), "n", 0);
+                                                if (!browserFilled) {
+                                                    browserFilled = true;
+                                                    watchThanks(web);
+                                                }
+                                                web.evaluateJavascript("window.AAFill.review()", new ValueCallback<String>() {
+                                                    @Override
+                                                    public void onReceiveValue(String rv) {
+                                                        Map<String, Object> v = Json.map(Json.tryParse(jsText(rv)));
+                                                        List<String> left = Json.strings(v.get("missing"));
+                                                        StringBuilder t = new StringBuilder(filled == 0
+                                                                ? "Nothing to fill: the fields are filled already, or your answers do not cover them."
+                                                                : "Filled " + filled + (filled == 1 ? " field" : " fields") + " (in green).");
+                                                        if (!left.isEmpty()) {
+                                                            t.append(' ').append(left.size()).append(left.size() == 1 ? " needs" : " need")
+                                                                    .append(" you (in orange): ").append(Util.cut(Util.join(", ", left), 120)).append('.');
+                                                        }
+                                                        if (Json.bool(v, "file")) {
+                                                            t.append(" Attach your CV with the site's file button.");
+                                                        }
+                                                        t.append(" Then tap the site's button to send it.");
+                                                        showReview(t.toString(), !left.isEmpty(), Json.bool(v, "submit"));
+                                                    }
+                                                });
                                             }
                                         });
                             }
