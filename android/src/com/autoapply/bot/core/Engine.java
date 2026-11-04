@@ -173,7 +173,7 @@ public final class Engine {
         }
     }
 
-    public static final String NOT_ACTIVE = "Auto apply isn't active on your account yet. You can start once it is.";
+    public static final String NOT_ACTIVE = "Auto apply needs Pro on your account. Jobs you apply to with the app's help work without it.";
 
     // ------------------------------------------------------------------ ready to send: your yes first
     /** Applications filled up to Submit that wait for your yes, and the ones you said yes to. */

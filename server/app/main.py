@@ -495,10 +495,8 @@ async def ai_chat(request: Request):
         raise ApiError(400, "This AI request is not valid (empty or too long).", "bad_request")
     purpose = text(b.get("purpose"), 20) or "apply"
     s = db.settings()
-    if not user["pro"] and purpose not in ("setup", "check"):
-        flavor, _ = app_info(request)
-        raise ApiError(403, "AI help isn't active on your account yet." if flavor == "play"
-                       else "Auto apply isn't active on your account yet.", "not_active")
+    if not user["pro"] and purpose not in ("setup", "check", "help"):   # help: forms and cover letters, for everyone
+        raise ApiError(403, "Auto apply needs Pro on your account. Everything else works without it.", "not_active")
     key = s.get("openrouter_key", "")
     if not key:
         raise ApiError(403, "The AI service is not set up yet. (Admin: add the OpenRouter key in the admin page.)",

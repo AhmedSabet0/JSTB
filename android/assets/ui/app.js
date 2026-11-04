@@ -866,17 +866,17 @@
       : (s.setup.account && s.setup.has_cv && !a.pro ? 'wait' : st.state === 'error' ? 'err' : '');
     $('state-dot').className = `dot ${tone}`;
     $('state-title').textContent = running ? (test && st.state === 'working' ? 'Test run: filling a form'
-      : STATE_TITLES[st.state] || 'Working') : (s.setup.account && s.setup.has_cv && !a.pro ? 'Not active yet'
+      : STATE_TITLES[st.state] || 'Working') : (s.setup.account && s.setup.has_cv && !a.pro ? 'Auto apply needs Pro'
         : st.state === 'error' ? STATE_TITLES.error : 'Ready');
     const idleMsg = !s.setup.account || !s.setup.has_cv ? 'Finish the setup to start.'
-      : !a.pro ? 'Auto apply isn’t active on your account yet. You can start once it is.'
+      : !a.pro ? 'Auto apply needs Pro on your account. The Jobs tab works without it: the app fills forms and writes cover letters.'
       : 'Press Start. You can lock the phone; it keeps going and sends you a summary.';
     const lastMsg = s.setup.account && s.setup.has_cv && !a.pro ? idleMsg
       : st.message === 'Stopped' ? 'Stopped. Press Start to go on.'
         : st.message && !['Ready', 'Finished'].includes(st.message) ? st.message : idleMsg;
     $('state-msg').textContent = running ? (st.message || 'Working…') : lastMsg;
     // Not active yet is explained by the banner and the line above, not as an error.
-    const err = !running && st.state === 'error' && st.error && !(s.setup.account && !a.pro && /active on your account/.test(st.error));
+    const err = !running && st.state === 'error' && st.error && !(s.setup.account && !a.pro && /needs Pro/.test(st.error));
     $('error-msg').hidden = !err;
     if (err) $('error-msg').textContent = st.error;
 
@@ -928,10 +928,7 @@
       items.push(['', '<b>Finish the setup</b><span>The app needs your account and your CV before it can apply.</span>',
         '<button class="btn primary" data-act="setup" type="button">Continue the setup</button>']);
     } else if (!(s.account || {}).pro && auto()) {
-      items.push(['', `<b>Auto apply isn’t active on your account yet</b><span class="who">Signed in as ${esc((s.account || {}).email)}. You can start once it is active.</span>`,
-        '<button class="btn" data-act="acc-check" type="button">Check again</button>']);
-    } else if (!(s.account || {}).pro) {
-      items.push(['info', `<b>AI help isn’t active on your account yet</b><span class="who">Your jobs, your answers and Fill work now. Cover letters and the AI's answers to new questions start once it is active.</span>`,
+      items.push(['info', `<b>Auto apply needs Pro</b><span class="who">Signed in as ${esc((s.account || {}).email)}. Applying in the background and its notifications start once your account has Pro. Until then the Jobs tab fills forms and writes cover letters for you.</span>`,
         '<button class="btn" data-act="acc-check" type="button">Check again</button>']);
     } else if (!s.setup.signed_in && auto()) {
       items.push(['', '<b>Sign in to LinkedIn</b><span>Easy Apply only works from a signed-in account. You sign in once.</span>',
@@ -984,7 +981,7 @@
     if (btn) btn.disabled = true;
     try {
       const r = await api('/api/account/refresh', {});
-      toast(r.account.pro ? (auto() ? 'Auto apply is active. Press Start.' : 'AI help is active.') : 'Not active yet.');
+      toast(r.account.pro ? (auto() ? 'Pro is on: press Start.' : 'Pro is on.') : 'No Pro yet: auto apply waits for it.');
     } catch (e) { toast(e.message, true); }
     if (btn) btn.disabled = false;
     refresh();
@@ -1120,7 +1117,7 @@
     if (state && state.setup.account && !acc().pro) {
       try { state.account = (await api('/api/account/refresh', {})).account; } catch (e) { /* use what is known */ }
       if (!acc().pro) {
-        toast('Auto apply isn’t active on your account yet.', true);
+        toast('Auto apply needs Pro on your account.', true);
         refresh();
         return;
       }
@@ -1493,8 +1490,8 @@
   });
   function renderAccountCard() {
     const a = acc();
-    $('acc-state').textContent = !a.signed_in ? 'Signed out' : a.pro ? 'Active' : 'Not active yet';
-    $('acc-state').className = `tag ${!a.signed_in ? '' : a.pro ? 'good' : 'warn'}`;
+    $('acc-state').textContent = !a.signed_in ? 'Signed out' : a.pro ? 'Pro' : 'Free';
+    $('acc-state').className = `tag ${!a.signed_in ? '' : a.pro ? 'good' : 'info'}`;
     $('acc-who').innerHTML = a.signed_in ? `${esc(a.name || a.email)}<small>${esc(a.name ? a.email : '')}${a.google
       ? `${a.name ? ' · ' : ''}Signed in with Google` : ''}</small>` : 'Not signed in';
     const byEmail = !a.has_password;
@@ -1502,11 +1499,10 @@
     $('acc-del-pw').type = byEmail ? 'email' : 'password';
     $('acc-del-pw').autocomplete = byEmail ? 'off' : 'current-password';
     $('acc-pro').textContent = !auto() ? (!a.signed_in ? 'Sign in to use the AI that fills forms and writes cover letters.'
-      : a.pro ? 'AI help is active: forms, new questions and cover letters.'
-        : 'AI help isn’t active on your account yet. Your jobs, your answers and Fill work without it.')
+      : 'AI help is on: forms, new questions and cover letters.')
       : !a.signed_in ? 'Sign in to use the AI and start auto apply.'
         : a.pro ? `Auto apply is active.${a.max_per_day ? ` At most ${a.max_per_day} applications a day.` : ''}`
-          : 'Auto apply isn’t active on your account yet. You can start once it is.';
+          : 'Free account: forms, cover letters and the AI work. Auto apply and its notifications need Pro.';
     $('btn-acc-check').hidden = !a.signed_in;
     $('btn-acc-out').hidden = !a.signed_in;
     $('btn-acc-signin').hidden = !!a.signed_in;
@@ -2157,8 +2153,7 @@
     $('sh-letter').textContent = letter;
     $('sh-letter-copy').hidden = !letter;
     if (!$('sh-letter-btn').dataset.busy) $('sh-letter-btn').textContent = letter ? 'Write another' : 'Write one for this job';
-    $('sh-letter-hint').textContent = (state && state.account && state.account.pro) ? ''
-      : 'Cover letters need AI help on your account.';
+    $('sh-letter-hint').textContent = '';
     const applied = j.state === 'applied';
     $('sh-applied').textContent = applied ? 'Applied' : 'I applied';
     $('sh-applied').disabled = applied;
@@ -2466,8 +2461,8 @@
     $('me-initial').textContent = (name.trim()[0] || '?').toUpperCase();
     $('me-name').textContent = a.signed_in ? name : 'Not signed in';
     $('me-email').textContent = a.signed_in ? (a.email || '') : 'Sign in from Settings.';
-    $('me-state').textContent = !a.signed_in ? 'Signed out' : a.pro ? 'Active' : 'Not active yet';
-    $('me-state').className = `tag ${!a.signed_in ? '' : a.pro ? 'good' : 'warn'}`;
+    $('me-state').textContent = !a.signed_in ? 'Signed out' : a.pro ? 'Pro' : 'Free';
+    $('me-state').className = `tag ${!a.signed_in ? '' : a.pro ? 'good' : 'info'}`;
     cvStates();
   }
   function renderAnnounce() {

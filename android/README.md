@@ -97,7 +97,8 @@ CV. Each item is a record; `sync.json` remembers what was synced and the server'
 - `core/Account.java`: sign up / in / out / delete. Only a sign-in token is kept on the phone. Every request says which
   build and version this is (`X-App-Flavor`, `X-App-Version`).
 - `core/Ai.java` sends AI requests to the server (`/v1/ai/chat`) with a purpose; the server holds the OpenRouter key.
-  Without Pro only the setup and the connection check use the AI.
+  Every account gets the AI for the setup, forms and cover letters (purpose `help`, within the admin's daily AI
+  limit for accounts without Pro); auto apply and its notifications need Pro.
 - `core/Reporter.java` sends the server what the app does: the activity lines you see in the app, each application
   (yours and auto apply's, with its channel and stage). While auto apply runs: every 30 seconds and right after each
   application, and the reply can stop the run (the admin's Stop, Pro turned off). Otherwise every couple of minutes

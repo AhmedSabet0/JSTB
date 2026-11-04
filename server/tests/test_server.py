@@ -87,8 +87,8 @@ def main_test():
         msgs = [{"role": "user", "content": "hi"}]
         r = c.post("/v1/ai/chat", headers=auth(tok), json={"messages": msgs, "purpose": "apply"})
         check("not Pro: applying refused", r.status_code == 403 and err(r) == "not_active", r.text)
-        r = c.post("/v1/ai/chat", headers={**auth(tok), "X-App-Flavor": "play"}, json={"messages": msgs, "purpose": "apply"})
-        check("not Pro, Google Play build: said as AI help", r.status_code == 403 and "AI help" in r.text, r.text)
+        r = c.post("/v1/ai/chat", headers=auth(tok), json={"messages": msgs, "purpose": "help"})
+        check("not Pro: help with forms and cover letters is allowed (no key yet here)", err(r) == "ai_not_configured", r.text)
         r = c.post("/v1/ai/chat", headers=auth(tok), json={"messages": msgs, "purpose": "setup"})
         check("no key on the server yet", r.status_code == 403 and err(r) == "ai_not_configured", r.text)
         check("bad AI request", c.post("/v1/ai/chat", headers=auth(tok), json={"messages": "x"}).status_code == 400)

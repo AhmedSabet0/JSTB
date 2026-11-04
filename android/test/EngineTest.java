@@ -982,7 +982,7 @@ public class EngineTest {
         e5.join(30000);
         // Whichever comes first stops it: the next report ("turned off") or the AI refusing the next request ("isn't active").
         check("Pro turned off: the run stops", !e5.running()
-                && Json.str(Util.getStatus(), "message").matches("(?s).*(turned off for|isn't active on) your account.*"),
+                && Json.str(Util.getStatus(), "message").matches("(?s).*(turned off for your account|needs Pro on your account).*"),
                 Util.getStatus().get("message"));
         TestServer.setPro(EMAIL, true);
 

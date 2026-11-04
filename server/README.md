@@ -91,7 +91,7 @@ GitHub Actions does this with the `SERVER_URL` variable (top README).
 
 | You want to | Do this |
 |---|---|
-| Let someone use auto apply | Turn on their **Pro** switch. Their app can start right away (Start checks again). |
+| Let someone use auto apply | Turn on their **Pro** switch. Their app can start right away (Start checks again). Without Pro an account still gets forms filled, the AI's answers and cover letters (Settings → AI requests a day, not Pro). |
 | Stop someone's run now | **Stop** on their row. It stops within 30 seconds; they can start again later. |
 | Keep someone from starting | Turn **Pro** off. A running app stops within 30 seconds too. |
 | Stop everybody (an emergency) | **Stop everyone** at the top. |

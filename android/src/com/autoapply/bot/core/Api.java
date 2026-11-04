@@ -895,7 +895,7 @@ public final class Api {
             requireAi();
             String letter;
             try {
-                letter = engine.newAi(engine.config.cvText(), engine.notesForAi(), "apply")
+                letter = engine.newAi(engine.config.cvText(), engine.notesForAi(), "help")
                         .coverLetter(Json.str(item, "title"), Json.str(item, "company"), Json.str(b, "text"));
             } catch (Ai.FatalAIError e) {
                 throw new IllegalArgumentException(e.getMessage());
@@ -913,11 +913,11 @@ public final class Api {
                 item = c.update(id, Json.obj("title", heading));  // a better name than the site's address
             }
             String text = Json.str(b, "text");
-            if (text.trim().length() < 200 || !engine.account.pro() || item.get("fit") instanceof Number) {
+            if (text.trim().length() < 200 || !engine.account.signedIn() || item.get("fit") instanceof Number) {
                 return Json.obj("ok", true, "item", item);
             }
             try {
-                Object[] r = engine.newAi(engine.config.cvText(), engine.notesForAi(), "apply")
+                Object[] r = engine.newAi(engine.config.cvText(), engine.notesForAi(), "help")
                         .score(Json.str(item, "title"), Json.str(item, "company"), Util.cut(text, 6000));
                 Map<String, Object> it = c.update(id, Json.obj("fit", r[0], "why", r.length > 1 ? String.valueOf(r[1]) : ""));
                 Util.log("Fit " + r[0] + "/10: " + Json.str(item, "title") + (r.length > 1 ? " (" + Util.cut(String.valueOf(r[1]), 120) + ")" : ""));
@@ -933,10 +933,7 @@ public final class Api {
         if (!engine.account.signedIn()) {
             throw new IllegalArgumentException("Sign in to your account first.");
         }
-        if (!engine.account.pro()) {
-            throw new IllegalArgumentException(autoApply() ? Engine.NOT_ACTIVE
-                    : "AI help isn't active on your account yet. Your own answers still work: copy them, or Fill on company sites.");
-        }
+        // Forms, new questions and cover letters work on every account; only auto apply needs Pro.
     }
 
     /** Every job you applied to: by auto apply, and by yourself with the app's help. Newest first, with its stage. */

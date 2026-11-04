@@ -23,7 +23,7 @@ public final class Filler {
     /** {answers: {key: value}, filled: n, skipped: [labels]} for the fields fill.js collected. */
     public static Map<String, Object> answers(Engine engine, List<Object> fields, String title, String company) {
         Map<String, String> cfg = engine.config.load();
-        Bot bot = new Bot(engine, cfg, new Bot.Options(), engine.newAi(engine.config.cvText(), engine.notesForAi(), "apply"),
+        Bot bot = new Bot(engine, cfg, new Bot.Options(), engine.newAi(engine.config.cvText(), engine.notesForAi(), "help"),
                 null, new ArrayList<String>(), cfg.get("LOCATION") == null ? "" : cfg.get("LOCATION"), new Session("apply"));
         bot.neverAsk = true;
         bot.setJob(title, company);

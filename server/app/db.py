@@ -140,7 +140,7 @@ CREATE TABLE IF NOT EXISTS login_codes (
 DEFAULTS = {
     "openrouter_key": "",
     "model": "openai/gpt-4o-mini",
-    "free_ai_per_day": "30",     # enough to read a CV during setup
+    "free_ai_per_day": "100",    # accounts without Pro: the setup, filling forms and cover letters
     "pro_ai_per_day": "800",
     "max_per_day": "0",          # applications per user per day; 0 = the app's own setting
     "signups_open": "1",
