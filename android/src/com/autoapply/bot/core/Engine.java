@@ -40,7 +40,7 @@ public final class Engine {
     /** Your data, the same in your account: every phone you sign in on, and your Google Drive. */
     public final Sync sync;
     public volatile Session session;
-    public volatile LinkedInVoyager currentVoyager;
+    private volatile LinkedIn current;
 
     public Engine(Platform platform, File dataDir) {
         this.platform = platform;
@@ -116,8 +116,12 @@ public final class Engine {
         }
     }
 
+    /** You finished signing in on the sign-in screen: check again right away. */
     public void signInDone() {
-        // LinkedIn session cookies refreshed in CookieManager
+        LinkedIn li = current;
+        if (li != null) {
+            li.signInSignal.set(true);
+        }
     }
 
     public void join(long millis) throws InterruptedException {
@@ -154,60 +158,23 @@ public final class Engine {
         return store.ready();
     }
 
-    /** You said yes (Apply, or Apply all with ids null): sends them via Voyager API with user cookies. */
+    /** You said yes (Apply, or Apply all with ids null): the bot sends them; when it is not running, a short run starts
+     *  that only sends them. Returns how many. */
     public synchronized int approve(List<String> ids) {
-        final List<String> targetIds = ids == null ? store.idsWithStatus("ready") : new ArrayList<String>(ids);
-        int n = store.changeStatus(targetIds, "ready", "approved");
+        int n = store.changeStatus(ids == null ? store.idsWithStatus("ready") : ids, "ready", "approved");
         if (n > 0) {
             log("You said yes to " + n + (n == 1 ? " application." : " applications."));
         }
         readyChanged();
-        if (n > 0) {
-            new Thread(new Runnable() {
-                @Override
-                public void run() {
-                    sendApprovedViaVoyager(targetIds);
-                }
-            }, "voyager-send").start();
+        if (n > 0 && !running()) {
+            Bot.Options o = new Bot.Options();
+            o.sendOnly = true;
+            String err = start(o);
+            if (!err.isEmpty()) {
+                log("Could not send them now: " + err);
+            }
         }
         return n;
-    }
-
-    /** Submits the approved applications via LinkedIn Voyager HTTP REST using user session cookies */
-    public void sendApprovedViaVoyager(List<String> ids) {
-        String cookieStr = platform.getCookies("https://www.linkedin.com");
-        String liAt = LinkedInVoyager.parseCookie(cookieStr, "li_at");
-        String jsessionId = LinkedInVoyager.parseCookie(cookieStr, "JSESSIONID");
-        if (liAt.isEmpty() || jsessionId.isEmpty()) {
-            log("Cannot apply: Missing LinkedIn cookies. Sign in to LinkedIn on Home first.");
-            platform.onSignInNeeded();
-            return;
-        }
-        LinkedInVoyager voyager = new LinkedInVoyager(liAt, jsessionId);
-        for (String jobId : ids) {
-            Map<String, Object> j = store.find(jobId);
-            if (j == null) continue;
-            String title = Json.str(j, "title");
-            String company = Json.str(j, "company");
-            log("Sending application to: " + title + (company.isEmpty() ? "" : " @ " + company));
-            Map<String, Object> answers = (j.get("qa") instanceof Map) ? (Map<String, Object>) j.get("qa") : Json.obj();
-            Map<String, Object> res = voyager.submitApplication(jobId, answers);
-            if (Json.bool(res, "ok")) {
-                Bot.recordSubmit(store.state(), 15, Util.now());
-                store.saveState();
-                store.setJobStatus(jobId, "applied", "Applied via LinkedIn Voyager API");
-                log("  APPLIED: " + title + (company.isEmpty() ? "" : " @ " + company));
-                platform.toast("🎉 Applied to " + title + " at " + company + "!");
-                sync.kick(2);
-            } else {
-                String err = Json.str(res, "error");
-                log("  Failed to apply: " + err);
-                store.setJobStatus(jobId, "error", err);
-                platform.toast("Could not submit: " + err);
-            }
-            readyChanged();
-            Util.pause(3, 6);
-        }
     }
 
     /** You said no (Skip): not sent. ids null = every ready one. */
@@ -218,7 +185,7 @@ public final class Engine {
     }
 
     /** The notification follows the applications that wait for you. */
-    public void readyChanged() {
+    void readyChanged() {
         try {
             platform.onReady(store.ready());
         } catch (RuntimeException e) {
@@ -299,7 +266,7 @@ public final class Engine {
         }
         int oldErrors = store.forgetOldOpenErrors();
         if (oldErrors > 0) {
-            log(oldErrors + " job(s) where errors occurred before will be tried again.");
+            log(oldErrors + " job(s) where the Easy Apply window did not open before this version will be tried again.");
         }
         File cv = config.cvFile(cfg);
         String cvText = config.cvText();
@@ -321,33 +288,20 @@ public final class Engine {
         Ai ai = newAi(cvText, notesForAi(), "apply");
         reporter.runStarted(mode);
         String[] fin = {"idle", "Finished"};
-
-        // Authenticate to LinkedIn via Voyager cookies (NO page automation)
-        String cookieStr = platform.getCookies("https://www.linkedin.com");
-        String liAt = LinkedInVoyager.parseCookie(cookieStr, "li_at");
-        String jsessionId = LinkedInVoyager.parseCookie(cookieStr, "JSESSIONID");
-        if (liAt.isEmpty() || jsessionId.isEmpty()) {
-            String msg = "Sign in to LinkedIn on Home first.";
-            log(msg);
-            Util.setStatus("state", "signin", "message", msg, "error", msg);
-            platform.onSignInNeeded();
+        Page page;
+        Util.setStatus("message", "Opening the browser...");
+        try {
+            page = platform.newPage();
+        } catch (RuntimeException e) {
+            log("Could not open the browser: " + Util.shortError(e));
+            Util.setStatus("state", "error", "message", "Could not open the browser", "error", Util.shortError(e));
             reporter.runEnded();
             return;
         }
-        LinkedInVoyager voyager = new LinkedInVoyager(liAt, jsessionId);
-        currentVoyager = voyager;
-        Util.setStatus("message", "Connecting to LinkedIn via cookies...");
-        Map<String, Object> sessionCheck = voyager.checkSession();
-        if (!Json.bool(sessionCheck, "ok")) {
-            String msg = "LinkedIn session expired. Sign in again on Home.";
-            log(msg);
-            Util.setStatus("state", "signin", "message", msg, "error", msg);
-            platform.onSignInNeeded();
-            reporter.runEnded();
-            return;
-        }
-        log("Connected to LinkedIn as " + Json.str(sessionCheck, "name") + " (pure HTTP via cookies).");
-
+        log("Browser: " + platform.browserName());
+        LinkedIn li = new LinkedIn(page, new Scripts(platform.pageScripts()), config.debugDir);
+        li.setCv(cv, cfg.get("CV_NAME"));
+        current = li;
         boolean started = false;
         Bot bot = null;
         try {
@@ -356,12 +310,32 @@ public final class Engine {
             Util.setStatus("message", "Choosing what to search for...");
             StringBuilder location = new StringBuilder();
             List<String> keywords = pickSearch(cfg, ai, location);
-            bot = new Bot(this, cfg, args, ai, voyager, keywords, location.toString(), sess);
+            bot = new Bot(this, cfg, args, ai, li, keywords, location.toString(), sess);
             started = true;
             log("Searches: " + Util.join(" | ", keywords) + (location.length() > 0 ? "  (" + location + ")" : "")
-                    + ". Pace: max " + bot.perHour + " per hour, " + bot.perDay + " per day. Evaluates at " + bot.minScore
+                    + ". Pace: max " + bot.perHour + " per hour, " + bot.perDay + " per day. Applies at " + bot.minScore
                     + "/10 or more.");
-            bot.run();
+            Util.setStatus("message", "Opening LinkedIn...");
+            li.ensureSignedIn();
+            String lang = li.uiLanguage();
+            if (!lang.isEmpty() && !lang.toLowerCase().startsWith("en")) {
+                log("Warning: your LinkedIn language looks like '" + lang + "'. The bot needs LinkedIn in English "
+                        + "(LinkedIn Settings > Account preferences > Display > Language).");
+            }
+            while (true) {
+                try {
+                    bot.run();
+                    break;
+                } catch (Util.BrowserClosed e) {
+                    if (bot.reopenPage()) {
+                        log("The bot's page was closed. Opened a new one.");
+                        continue;
+                    }
+                    log("The browser was closed. Start again to continue where it stopped.");
+                    fin = new String[]{"idle", "The browser was closed"};
+                    break;
+                }
+            }
         } catch (Util.StopRequested e) {
             String why = Util.stopReason;
             if (why.isEmpty()) {
@@ -370,11 +344,22 @@ public final class Engine {
             } else {
                 fin = new String[]{"idle", why};
             }
+            Util.shield();
+            try {
+                li.discard();  // never leave a half-filled form open
+            } catch (RuntimeException x) {
+                // the page may be gone
+            } finally {
+                Util.unshield();
+            }
+        } catch (Util.BrowserClosed e) {
+            log("The browser was closed. Start again to continue where it stopped.");
+            fin = new String[]{"idle", "The browser was closed"};
         } catch (Ai.FatalAIError e) {
             log("AI error: " + e.getMessage());
             fin = new String[]{"error", e.getMessage()};
         } catch (Bot.TooManyErrors e) {
-            log("Stopped after 10 errors in a row.");
+            log("Stopped after 10 errors in a row. LinkedIn may have changed its layout.");
             fin = new String[]{"error", "Stopped after 10 errors in a row"};
         } catch (SetupError e) {
             log(e.getMessage());
@@ -383,7 +368,7 @@ public final class Engine {
             log("Unexpected error: " + Util.shortError(e));
             fin = new String[]{"error", Util.shortError(e)};
         } finally {
-            currentVoyager = null;
+            current = null;
             sess.ended = Util.now();
             List<String> lines = new ArrayList<String>();
             Map<String, Object> summary = null;
@@ -396,6 +381,19 @@ public final class Engine {
                 int[] counts = Bot.appliedCounts(store.stateCopy(), Util.now());
                 log("Applied today: " + counts[1] + ".");
             }
+            try {
+                platform.closePage(li.page);
+            } catch (RuntimeException e) {
+                // already closed
+            }
+            if (li.dumped) {
+                try {
+                    zipDir(config.debugDir, debugZip);
+                    log("Pages where something went wrong were saved (share debug.zip from the menu for troubleshooting).");
+                } catch (IOException e) {
+                    // optional
+                }
+            }
             Util.STOP.set(false);
             Util.stopReason = "";
             Util.setStatus("state", fin[0], "message", fin[1], "job", null, "next_slot_at", 0,
@@ -404,6 +402,35 @@ public final class Engine {
             if (started) {
                 platform.onSessionEnd(summary, lines);
             }
+        }
+    }
+
+    static void zipDir(File dir, File zip) throws IOException {
+        File[] files = dir.listFiles();
+        if (files == null) {
+            return;
+        }
+        ZipOutputStream out = new ZipOutputStream(new FileOutputStream(zip));
+        try {
+            byte[] buf = new byte[16384];
+            for (File f : files) {
+                if (!f.isFile()) {
+                    continue;
+                }
+                out.putNextEntry(new ZipEntry(f.getName()));
+                InputStream in = new FileInputStream(f);
+                try {
+                    int n;
+                    while ((n = in.read(buf)) > 0) {
+                        out.write(buf, 0, n);
+                    }
+                } finally {
+                    in.close();
+                }
+                out.closeEntry();
+            }
+        } finally {
+            out.close();
         }
     }
 }

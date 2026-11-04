@@ -123,28 +123,13 @@ public final class Store {
     }
 
     // ------------------------------------------------------------------ jobs
-    public synchronized Map<String, Object> answers() {
-        return new LinkedHashMap<String, Object>(answers);
-    }
-
-    public synchronized Map<String, Object> find(String id) {
+    private Map<String, Object> find(String id) {
         for (Map<String, Object> j : jobs) {
             if (id.equals(Json.str(j, "id"))) {
                 return j;
             }
         }
         return null;
-    }
-
-    public synchronized void setJobStatus(String jobId, String status, String reason) {
-        Map<String, Object> j = find(jobId);
-        if (j != null) {
-            j.put("status", status);
-            if (reason != null) {
-                j.put("reason", reason);
-            }
-            saveJobs();
-        }
     }
 
     /** True if the job was already handled (statuses in `retry` count as not handled). */
@@ -170,7 +155,7 @@ public final class Store {
     }
 
     public synchronized void add(String jobId, String status, String title, String company, Object score, String reason,
-                                 Object qa) {
+                                 List<Object> qa) {
         Map<String, Object> j = find(jobId);
         if (j != null) {
             jobs.remove(j);

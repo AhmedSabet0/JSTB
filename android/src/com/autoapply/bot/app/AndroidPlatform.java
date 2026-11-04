@@ -104,7 +104,7 @@ public final class AndroidPlatform implements Platform {
                     in.close();
                 }
             } catch (IOException e) {
-                scripts = "";
+                throw new IllegalStateException("li.js is missing from the app", e);
             }
         }
         return scripts;
@@ -189,25 +189,6 @@ public final class AndroidPlatform implements Platform {
         } catch (RuntimeException e) {
             return false;
         }
-    }
-
-    @Override
-    public String getCookies(String url) {
-        try {
-            return CookieManager.getInstance().getCookie(url);
-        } catch (Exception e) {
-            return "";
-        }
-    }
-
-    @Override
-    public void toast(final String msg) {
-        main.post(new Runnable() {
-            @Override
-            public void run() {
-                Toast.makeText(app, msg, Toast.LENGTH_SHORT).show();
-            }
-        });
     }
 
     @Override

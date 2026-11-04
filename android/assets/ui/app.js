@@ -872,7 +872,7 @@
     $('btn-stop').hidden = !running;
     if (!running) $('btn-stop').disabled = false;
     $('btn-test').hidden = running || !ready;
-    $('btn-live').hidden = true;
+    $('btn-live').hidden = !running;
 
     const sess = running ? s.session : (s.session || s.last_session);
     const sessMode = sess ? sess.mode : 'apply';
@@ -1410,8 +1410,7 @@
         box.querySelectorAll('input').forEach((i) => { i.checked = vals.includes(i.value); });
       });
       $('s-AUTO_UPDATE').checked = String(d.AUTO_UPDATE) !== '0';
-      $('s-APPROVE_FIRST').checked = true;
-      $('s-APPROVE_FIRST').disabled = true;
+      $('s-APPROVE_FIRST').checked = String(d.APPROVE_FIRST) !== '0';
       const nq = String(d.NEW_QUESTIONS || '').trim().toLowerCase();
       const newq = ['unsure', 'sure', 'mixed'].includes(nq) ? 'unsure'
         : ['ai', 'auto', 'off', 'no', 'false', '0'].includes(nq) ? 'ai' : 'ask';
