@@ -2103,9 +2103,9 @@
     $('sh-why').hidden = !j.why;
     $('sh-why').textContent = j.why || '';
     const li = j.channel === 'linkedin';
-    $('sh-open').textContent = li ? 'Apply on LinkedIn' : 'Open the form here';
+    $('sh-open').textContent = li ? 'Apply on LinkedIn' : 'Fill and review';
     $('sh-open-hint').textContent = li ? 'Opens in the LinkedIn app. Copy your answers from below while you fill the form.'
-      : 'Fill the form puts your answers in, and the file button offers your CV. You check it and send it.';
+      : 'Opens the form, fills it with your answers and shows what needs you. You check it and tap the site\'s button to send it.';
     if (first) {
       renderAnswers();
       $('sh-q').value = '';
@@ -2231,7 +2231,7 @@
     const j = findJob(sheetId);
     if (!j) return;
     try {
-      await api('/api/copilot/open', { id: j.id });
+      await api('/api/copilot/open', { id: j.id, fill: j.channel !== 'linkedin' });
       if (j.channel === 'linkedin') awaiting = { id: j.id, at: Date.now() };
     } catch (e) { toast(e.message, true); }
   });

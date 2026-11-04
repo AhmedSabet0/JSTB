@@ -197,5 +197,101 @@
     });
   }
 
-  window.AAFill = { collect: collect, apply: apply, frames: frames, page: page };
+  // ---------------------------------------------------------------- Fill and review
+  // The site's own "Apply" button, when the job page shows the form only after it. Never a "Submit" button, and never
+  // "Apply with LinkedIn / Indeed / Google" (those are other sites' sign-ins).
+  var START = /^(apply( now| for (this|the) (job|position|role))?|start (your )?application|apply here|i'?m interested|apply online)$/i;
+  var OTHER = /linkedin|indeed|google|facebook|seek|glassdoor|resume ?parse|upload resume to autofill/i;
+  function labelText(el) {
+    return clean(el.innerText || el.value || el.getAttribute('aria-label') || '');
+  }
+  function startButton() {
+    var list = document.querySelectorAll('a, button, [role="button"], input[type="button"]');
+    for (var i = 0; i < list.length; i++) {
+      var el = list[i];
+      var t = labelText(el);
+      if (t && t.length < 40 && START.test(t) && !OTHER.test(t) && visible(el) && !el.closest('form')) return el;
+    }
+    return null;
+  }
+  function clickStart() {
+    var b = startButton();
+    if (!b) return '';
+    var t = labelText(b);
+    b.click();
+    return t;
+  }
+
+  // Required fields that are still empty after filling: marked in orange, for you.
+  function isEmpty(item) {
+    var el = item.els[0];
+    if (item.f.kind === 'radio' || item.f.kind === 'multi') return !item.els.some(function (e) { return e.checked; });
+    if (item.f.kind === 'checkbox') return !el.checked;
+    if (item.f.kind === 'select') return el.selectedIndex <= 0 && !clean(el.value);
+    return !String(el.value || '').trim();
+  }
+  function fileWanted() {
+    var f = document.querySelectorAll('input[type="file"]');
+    for (var i = 0; i < f.length; i++) {
+      if (!(f[i].files && f[i].files.length)) return true;
+    }
+    return false;
+  }
+  function missing() {
+    var out = [];
+    fields.forEach(function (item) {
+      if (!item.f.required || !isEmpty(item)) return;
+      var box = item.els.length > 1 ? (item.els[0].closest('fieldset') || item.els[0].parentElement) : item.els[0];
+      box.style.outline = '2px solid #d97706';
+      box.style.outlineOffset = '1px';
+      out.push(item.f.label);
+    });
+    return out;
+  }
+  function review() {
+    return JSON.stringify({ missing: missing(), file: fileWanted(), submit: !!submitButton() });
+  }
+  var nextAt = 0;
+  function next() {
+    var left = fields.filter(function (item) { return item.f.required && isEmpty(item); });
+    if (!left.length) return '';
+    var item = left[nextAt % left.length];
+    nextAt++;
+    var el = item.els[0];
+    el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    try { el.focus({ preventScroll: true }); } catch (e) { /* not focusable */ }
+    return item.f.label;
+  }
+  var SUBMIT = /^(submit( (my )?application)?|send( (my )?application)?|apply|finish|complete( application)?)$/i;
+  function submitButton() {
+    var list = document.querySelectorAll('button, input[type="submit"], [role="button"]');
+    var best = null;
+    for (var i = 0; i < list.length; i++) {
+      var el = list[i];
+      if (!visible(el)) continue;
+      var t = labelText(el);
+      if (el.type === 'submit' || (t.length < 40 && SUBMIT.test(t))) best = el;   // the last one: forms end with it
+    }
+    return best;
+  }
+  function toSubmit() {
+    var b = submitButton();
+    if (!b) return false;
+    b.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    b.style.outline = '3px solid #0a66c2';
+    b.style.outlineOffset = '3px';
+    return true;   // you tap it yourself
+  }
+
+  // The site's "thank you" after you sent it: the app marks the job Applied.
+  var THANKS = /thank(s| you) for (applying|your application)|application (has been |was )?(received|submitted|sent)|we('ve| have) received your application|successfully (submitted|applied)|your application is (complete|in)/i;
+  function done() {
+    var body = document.body ? (document.body.innerText || '') : '';
+    var open = document.querySelectorAll('form input:not([type="hidden"]), form textarea');
+    var openVisible = Array.prototype.filter.call(open, visible).length;
+    return THANKS.test(body.slice(0, 20000)) && openVisible < 2;
+  }
+
+  window.AAFill = { collect: collect, apply: apply, frames: frames, page: page, clickStart: clickStart, review: review,
+    next: next, toSubmit: toSubmit, done: done };
 }());

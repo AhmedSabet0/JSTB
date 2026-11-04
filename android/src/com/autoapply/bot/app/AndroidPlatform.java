@@ -258,8 +258,8 @@ public final class AndroidPlatform implements Platform {
             @Override
             public void run() {
                 MainActivity a = activity();
-                if ("inapp".equals(how) && a != null && !a.isFinishing()) {
-                    a.showBrowser(url, jobId, title);
+                if (("inapp".equals(how) || "inapp-fill".equals(how)) && a != null && !a.isFinishing()) {
+                    a.showBrowser(url, jobId, title, "inapp-fill".equals(how));
                     return;
                 }
                 Uri uri = Uri.parse(url);
