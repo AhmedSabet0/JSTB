@@ -92,7 +92,7 @@ CREATE TABLE IF NOT EXISTS user_files (
   at REAL NOT NULL,
   PRIMARY KEY (user_id, name)
 );
--- A user's Google Drive: the (encrypted) tokens, the Auto Apply folder and its files, what was synced last.
+-- A user's Google Drive: the (encrypted) tokens, the JSTB folder and its files, what was synced last.
 CREATE TABLE IF NOT EXISTS drive_links (
   user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
   email TEXT NOT NULL DEFAULT '',

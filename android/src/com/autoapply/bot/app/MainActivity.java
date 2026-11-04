@@ -267,7 +267,7 @@ public final class MainActivity extends Activity {
                 public void run() {
                     ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
                     if (cm != null) {
-                        cm.setPrimaryClip(ClipData.newPlainText("Auto Apply", text == null ? "" : text));
+                        cm.setPrimaryClip(ClipData.newPlainText("JSTB", text == null ? "" : text));
                     }
                 }
             });
@@ -1257,7 +1257,7 @@ public final class MainActivity extends Activity {
                 if ("play".equals(BuildConfig.FLAVOR)) {
                     // Google Play build: the list in Settings (asking directly needs a permission Play restricts).
                     startActivity(new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS));
-                    Toast.makeText(this, "Pick All apps, then Auto Apply, then Don't optimize.", Toast.LENGTH_LONG).show();
+                    Toast.makeText(this, "Pick All apps, then JSTB, then Don't optimize.", Toast.LENGTH_LONG).show();
                 } else {
                     try {
                         startActivity(new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:" + pkg)));
@@ -1269,7 +1269,7 @@ public final class MainActivity extends Activity {
                 startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:" + pkg)));
             }
         } catch (ActivityNotFoundException e) {
-            Toast.makeText(this, "Open Settings > Apps > Auto Apply to change this.", Toast.LENGTH_LONG).show();
+            Toast.makeText(this, "Open Settings > Apps > JSTB to change this.", Toast.LENGTH_LONG).show();
         }
     }
 

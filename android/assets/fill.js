@@ -1,4 +1,4 @@
-/* Auto Apply: fills a job application form on a company's site that you opened in the app. You check it and submit
+/* JSTB: fills a job application form on a company's site that you opened in the app. You check it and submit
    it yourself. collect() lists the form's empty fields; apply(values) fills them and marks them in green. */
 (function () {
   'use strict';

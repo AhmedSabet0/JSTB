@@ -264,3 +264,5 @@ textarea { resize: vertical; }
   .feed li.one .x { grid-column: auto; }
   .toolbar select { width: 100%; }
 }
+
+.logo .arr, .hero-mark .arr { fill: none; stroke: var(--action-ink, #fff); stroke-width: 3.4; stroke-linecap: round; stroke-linejoin: round; }

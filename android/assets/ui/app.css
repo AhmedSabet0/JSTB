@@ -665,3 +665,5 @@ body.tabs .toast { bottom: calc(92px + env(safe-area-inset-bottom)); }
   .dot.run, .qcard, .scrim, .sheet, .stamp { animation: none; }
   .ring-fill, .desk-meter i, .tabbar svg { transition: none; }
 }
+
+.logo .arr, .hero-mark .arr { fill: none; stroke: var(--action-ink, #fff); stroke-width: 3.4; stroke-linecap: round; stroke-linejoin: round; }

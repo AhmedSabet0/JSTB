@@ -1,4 +1,4 @@
-# Auto Apply for Android
+# JSTB for Android
 
 Helps you send many job applications with little typing, in two builds:
 
@@ -16,7 +16,7 @@ form and send it. That is what keeps it inside Play's rules (see `PLAY_CONSOLE.m
 
 - **Find jobs.** Home has one LinkedIn search per job title of yours (Easy Apply only, newest first, posted within your
   setting, your work type and level), opened in the LinkedIn app, plus Google Jobs and Wuzzuf in the app's browser.
-- **Collect them.** On any job, tap Share and pick *Add to Auto Apply* (or paste a link). LinkedIn links become their
+- **Collect them.** On any job, tap Share and pick *Add to JSTB* (or paste a link). LinkedIn links become their
   plain `/jobs/view/ID/` form; tracking bits are removed from other links; the share text gives the title and company.
   The same job is never added twice. Kept in `copilot.json` (`core/Copilot.java`).
 - **Apply.** Home shows the next job (best fit first). Its sheet has:
@@ -104,7 +104,7 @@ CV. Each item is a record; `sync.json` remembers what was synced and the server'
   application, and the reply can stop the run (the admin's Stop, Pro turned off). Otherwise every couple of minutes
   when there is something new. What cannot be sent waits in `report_queue.json`.
 - The server's answers also carry the admin's announcement (shown on Home) and the oldest version it accepts: an older
-  app shows only an *Update Auto Apply* screen (Google Play, or the GitHub release).
+  app shows only an *Update JSTB* screen (Google Play, or the GitHub release).
 
 ## Build
 

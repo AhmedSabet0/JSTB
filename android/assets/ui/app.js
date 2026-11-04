@@ -1,4 +1,4 @@
-/* Auto Apply (Android): setup, home, your jobs, applications, profile and settings. Talks to the app through window.AA.
+/* JSTB (Android): setup, home, your jobs, applications, profile and settings. Talks to the app through window.AA.
    The Google Play build applies with you (Jobs: you send each application with the app's help); the GitHub build can
    also apply by itself (auto apply). */
 (() => {
@@ -74,8 +74,8 @@
   }
 
   // ------------------------------------------------------------------ navigation
-  const TITLES = { setup: 'Auto Apply', home: 'Auto Apply', queue: 'Your jobs', tracker: 'Applied', profile: 'Profile',
-    settings: 'Settings', info: 'Your info', jobs: 'Auto apply history', log: 'Activity', update: 'Auto Apply' };
+  const TITLES = { setup: 'JSTB', home: 'JSTB', queue: 'Your jobs', tracker: 'Applied', profile: 'Profile',
+    settings: 'Settings', info: 'Your info', jobs: 'Auto apply history', log: 'Activity', update: 'JSTB' };
   const TABS = ['home', 'queue', 'tracker', 'profile'];
   const TAB_OF = { settings: 'profile', info: 'profile', jobs: 'profile', log: 'profile' };
   const auto = () => !!(state && state.auto_apply);
@@ -90,7 +90,7 @@
     closeSheets();
     view = v;
     document.querySelectorAll('.view').forEach((s) => { s.hidden = s.id !== `v-${v}`; });
-    $('bar-title').textContent = TITLES[v] || 'Auto Apply';
+    $('bar-title').textContent = TITLES[v] || 'JSTB';
     const top = TABS.includes(v) || v === 'setup' || v === 'update';
     $('nav-back').hidden = top;
     $('nav-settings').hidden = !TABS.includes(v);
@@ -292,7 +292,7 @@
       permStates(document.querySelector('.step[data-step="done"]'));
       const dr = (state.sync || {}).drive || {};
       $('w-drive-done').hidden = !dr.connected;
-      $('w-drive-done-text').innerHTML = dr.connected ? `Google Drive is on: your <b>Auto Apply</b> folder${dr.email ? ` in ${esc(dr.email)}` : ''} keeps your CV, answers and jobs.` : '';
+      $('w-drive-done-text').innerHTML = dr.connected ? `Google Drive is on: your <b>JSTB</b> folder${dr.email ? ` in ${esc(dr.email)}` : ''} keeps your CV, answers and jobs.` : '';
     }
     if (wStep === 'cv') cvStates();
   }
@@ -1604,11 +1604,11 @@
     if (!d) text = 'Checking…';
     else if (!d.available && !on) text = d.error && !/not have Google Drive/.test(d.error) ? d.error
       : 'Google Drive isn’t set up on the server yet.';
-    else if (!on) text = 'Keep your CV, your answers and your jobs in an Auto Apply folder in your own Google Drive too, and edit them there. The app sees only the files it makes, nothing else in your Drive.';
+    else if (!on) text = 'Keep your CV, your answers and your jobs in a JSTB folder in your own Google Drive too, and edit them there. The app sees only the files it makes, nothing else in your Drive.';
     else if (reconnect) text = 'Google asks you to connect again (the access was removed or ran out). Your files are still in your Drive.';
     else if (d.error) text = d.error;
-    else if (!ready) text = 'Making your Auto Apply folder: your CV, My answers and My jobs.';
-    else text = `In your Auto Apply folder. Synced ${agoText(d.synced_at)}.`;
+    else if (!ready) text = 'Making your JSTB folder: your CV, My answers and My jobs.';
+    else text = `In your JSTB folder. Synced ${agoText(d.synced_at)}.`;
     $('drive-text').textContent = text;
     $('drive-text').classList.toggle('bad-text', !!(on && d.error));
     $('drive-files').hidden = !ready;
@@ -1634,7 +1634,7 @@
   $('btn-drive-connect').addEventListener('click', async () => {
     try {
       await api('/api/drive/connect', {});
-      toast('Choose your Google account in the browser, allow Auto Apply, then come back here.');
+      toast('Choose your Google account in the browser, allow JSTB, then come back here.');
       driveAskedAt = 0;
     } catch (e) { toast(e.message, true); }
   });
@@ -2054,7 +2054,7 @@
     box.querySelectorAll('.find-link').forEach((b) => b.addEventListener('click', () => {
       const l = searchLinks[+b.dataset.i];
       api('/api/open-link', { url: l.url, how: 'linkedin' })
-        .then(() => toast('On a job you like: Share, then Auto Apply.'))
+        .then(() => toast('On a job you like: Share, then JSTB.'))
         .catch((e) => toast(e.message, true));
     }));
     $('find-none').hidden = searchLinks.length > 0;
@@ -2101,7 +2101,7 @@
     $('queue-empty').hidden = list.length > 0;
     $('queue-empty-title').textContent = qFilter === 'new' ? 'No jobs waiting' : 'Nothing skipped';
     $('queue-empty-text').textContent = qFilter === 'new'
-      ? 'Find jobs from the Home screen. On a job you like, tap Share and pick Auto Apply.'
+      ? 'Find jobs from the Home screen. On a job you like, tap Share and pick JSTB.'
       : 'Jobs you skip wait here, in case you change your mind.';
   }
   document.querySelectorAll('[data-qf]').forEach((b) => b.addEventListener('click', () => {

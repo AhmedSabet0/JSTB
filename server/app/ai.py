@@ -5,7 +5,7 @@ import httpx
 
 OPENROUTER_URL = os.environ.get("OPENROUTER_URL", "https://openrouter.ai/api/v1/chat/completions")
 PUBLIC_URL = os.environ.get("PUBLIC_URL", "")
-APP_NAME = os.environ.get("APP_NAME", "Auto Apply")
+APP_NAME = os.environ.get("APP_NAME", "JSTB")
 
 MAX_CHARS = 60000      # the whole conversation, per request
 MAX_TOKENS = 2000

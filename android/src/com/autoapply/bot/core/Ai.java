@@ -15,7 +15,7 @@ import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-/** The AI (OpenRouter, through the Auto Apply server): job match scoring, form answers, answer suggestions and search
+/** The AI (OpenRouter, through the JSTB server): job match scoring, form answers, answer suggestions and search
  *  suggestions. The server adds the OpenRouter key and picks the model; the app sends its account token. */
 public final class Ai {
     /** Where requests go when `url` is not set (an OpenRouter-compatible chat completions endpoint). */
@@ -144,7 +144,7 @@ public final class Ai {
             c.setDoOutput(true);
             c.setRequestProperty("Authorization", "Bearer " + apiKey);
             c.setRequestProperty("Content-Type", "application/json");
-            c.setRequestProperty("X-Title", "Auto Apply");
+            c.setRequestProperty("X-Title", "JSTB");
             c.setRequestProperty("X-App-Flavor", Account.flavor);  // the server words its replies for this build
             c.setRequestProperty("X-App-Version", String.valueOf(Account.versionCode));
             OutputStream out = c.getOutputStream();
@@ -194,7 +194,7 @@ public final class Ai {
             int status = Integer.parseInt(raw.substring(0, nl));
             String body = raw.substring(nl + 1);
             if (status == 401) {
-                throw new FatalAIError("You were signed out of your Auto Apply account. Sign in again in Settings.");
+                throw new FatalAIError("You were signed out of your JSTB account. Sign in again in Settings.");
             }
             if (status == 402 || status == 403) {
                 throw new FatalAIError(shortBody(body));

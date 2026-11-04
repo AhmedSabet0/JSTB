@@ -206,7 +206,7 @@ def main_test():
         ans = fake.find_app("answers")[0]["id"]
         jobs = fake.find_app("jobs")[0]["id"]
         cvf = fake.find_app("cv")[0]["id"]
-        check("one Auto Apply folder holding the three files", len(folder) == 1 and folder[0]["name"] == "Auto Apply" and all(
+        check("one Auto Apply folder holding the three files", len(folder) == 1 and folder[0]["name"] == "JSTB" and all(
             folder[0]["id"] in fake.files[x]["parents"] for x in (ans, jobs, cvf)))
         check("the CV in Drive is the user's file", fake.files[cvf]["content"] == pdf and fake.files[cvf]["name"] == "Sara CV.pdf")
         av = fake.user_values(ans)
@@ -546,7 +546,7 @@ def main_test():
         fake.email = "nada@gmail.com"
         page = c.get("/oauth/google/callback", params=fake.consent(start))
         check("a Google account that signs in to another account cannot be added", page.status_code == 400
-              and "another Auto Apply account" in page.text, page.text[-300:])
+              and "another JSTB account" in page.text, page.text[-300:])
         c.post("/admin/api/settings", headers=A, json={"signups_open": False})
         url, page, code = google_login("someone@gmail.com", V)
         check("new accounts closed: a new Google account is told", page.status_code == 400 and "closed" in page.text and not code)

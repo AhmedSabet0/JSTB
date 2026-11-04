@@ -1,4 +1,4 @@
-"""Auto Apply server.
+"""JSTB server.
 
 - Accounts for the app (email + password).
 - The AI proxy: the app sends the conversation, the server adds the OpenRouter key and model set in the admin page,
@@ -32,7 +32,7 @@ from . import ai, db, drive, pages, records, security
 log = logging.getLogger("autoapply")
 
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "")
-APP_NAME = os.environ.get("APP_NAME", "Auto Apply")
+APP_NAME = os.environ.get("APP_NAME", "JSTB")
 CONTACT = os.environ.get("CONTACT_EMAIL", "")
 STATIC = os.path.join(os.path.dirname(__file__), "static")
 STATIC_FILES = {"admin.css", "admin.js", "figtree.woff2"}
@@ -71,7 +71,7 @@ async def lifespan(_app):
     await ai.close()
 
 
-app = FastAPI(title="Auto Apply server", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
+app = FastAPI(title="JSTB server", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
 
 
 @app.exception_handler(ApiError)
@@ -359,7 +359,7 @@ async def google_signed_in(row, code):
         uid = row["user_id"]
         other = db.one("SELECT id, email FROM users WHERE google_sub = ? AND id != ?", (sub, uid))
         if other is not None:
-            raise drive.DriveError("other", f"{email} already signs in to another Auto Apply account ({other['email']}).")
+            raise drive.DriveError("other", f"{email} already signs in to another JSTB account ({other['email']}).")
         with db.tx() as t:
             t.execute("UPDATE users SET google_sub = ? WHERE id = ?", (sub, uid))
         if drive.SCOPE in str(data.get("scope") or "").split():
@@ -371,7 +371,7 @@ async def google_signed_in(row, code):
     user = db.one("SELECT * FROM users WHERE google_sub = ?", (sub,)) or db.one("SELECT * FROM users WHERE email = ?", (email,))
     if row["purpose"] == "delete":
         if user is None:
-            return pages.delete_form(f"No Auto Apply account uses {email}.")
+            return pages.delete_form(f"No JSTB account uses {email}.")
         token = security.new_token()
         with db.tx() as t:
             t.execute("INSERT INTO login_codes(code_hash, user_id, purpose, expires_at) VALUES (?, ?, 'delete', ?)",
@@ -398,7 +398,7 @@ async def google_signed_in(row, code):
                                                        1 if created else 0, now + 300))
     if drive.SCOPE in str(data.get("scope") or "").split():
         try:
-            await drive.link_tokens(uid, data, email)        # the same Google account keeps your Auto Apply folder
+            await drive.link_tokens(uid, data, email)        # the same Google account keeps your JSTB folder
         except drive.DriveError as e:
             log.info("user %s: signed in, Drive not linked: %s", uid, e.message)
     return pages.signed_in(email, code_out)
@@ -735,7 +735,7 @@ async def link_google(request: Request):
 
 @app.post("/v1/me/drive/link")
 async def link_drive(request: Request):
-    """The Google page to open in the browser, where the user lets Auto Apply use a folder in their Drive."""
+    """The Google page to open in the browser, where the user lets JSTB use a folder in their Drive."""
     user = current_user(request)
     try:
         url = drive.start_url(user["id"])

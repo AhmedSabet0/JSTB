@@ -1,6 +1,6 @@
-# Auto Apply server
+# JSTB server
 
-The server behind the Auto Apply Android app (version 2.0 and later; 3.0 adds the activity feed, jobs people apply to
+The server behind the JSTB Android app (version 2.0 and later; 3.0 adds the activity feed, jobs people apply to
 themselves, the announcement and required updates; 3.1 keeps each user's data and syncs it with their Google Drive;
 3.2 adds Sign in with Google).
 
@@ -21,7 +21,7 @@ themselves, the announcement and required updates; 3.1 keeps each user's data an
 - **Each user's data** (3.1): the CV file and its text, the setup answers, "Your info", settings and the job lists are
   kept in the user's account, so every phone they sign in on has the same (`/v1/me/data`, `/v1/me/cv`). The admin page
   shows how much each account holds (Details > Data in the account).
-- **Google Drive** (3.1, optional): a user connects their Drive in the app; the server keeps an **Auto Apply** folder in
+- **Google Drive** (3.1, optional): a user connects their Drive in the app; the server keeps an **JSTB** folder in
   it the same as their data, both ways: the CV file, **My answers** and **My jobs** (Google Sheets). What they edit there
   comes back to the app. See "Google Drive" below.
 - **Google Play pages**: `/privacy` (privacy policy) and `/delete-account` (account deletion on the web).
@@ -118,9 +118,9 @@ The server signs users in with Google (OAuth, the `openid email profile` scopes)
 `drive.file` permission (it sees only the files it makes, not the rest of anyone's Drive). One OAuth client does both.
 Make it once:
 
-1. [console.cloud.google.com](https://console.cloud.google.com) → New project (for example "Auto Apply").
+1. [console.cloud.google.com](https://console.cloud.google.com) → New project (for example "JSTB").
 2. APIs & Services → Library → turn on **Google Drive API** and **Google Sheets API**.
-3. Google Auth Platform → **Get started**: app name "Auto Apply", your email, Audience **External**, contact email →
+3. Google Auth Platform → **Get started**: app name "JSTB", your email, Audience **External**, contact email →
    Create.
 4. **Branding**: app home page `https://DOMAIN/`, privacy policy `https://DOMAIN/privacy`, authorized domain: the top
    domain (for `145-241-153-177.sslip.io` it is `sslip.io`) → Save.

@@ -1,4 +1,4 @@
-# Publishing Auto Apply on Google Play
+# Publishing JSTB on Google Play
 
 A checklist for Play Console, with the text to paste. `DOMAIN` is your server's domain (for example
 `145-241-153-177.sslip.io`).
@@ -47,7 +47,7 @@ track than internal testing, the `PLAY_TRACK` variable (`alpha` is closed testin
 
 ## 3. Create the app
 
-All apps > Create app: name (up to 30 characters, for example `Auto Apply: Job Applications`), default language
+All apps > Create app: name (up to 30 characters, for example `JSTB: Job Applications`), default language
 English (United States), App, Free. Accept the declarations.
 
 ## 4. Closed test (the 14 days)
@@ -76,7 +76,7 @@ English (United States), App, Free. Accept the declarations.
 > Sign in with the email and password above ("Sign in" under Continue with Google; it has AI help on). The setup asks
 > for a CV (any text-based PDF works) and a few
 > answers. Then Home has job searches; on any job page (LinkedIn app, Chrome, or the app's own browser) tap Share and
-> pick "Add to Auto Apply", or paste a job link on the Jobs tab. Open the job: its sheet has your answers to copy, a
+> pick "Add to JSTB", or paste a job link on the Jobs tab. Open the job: its sheet has your answers to copy, a
 > cover letter, and "Open the form here", where "Fill the form" fills a company's application form for you to check
 > and send. The app never submits anything by itself. "I applied" moves the job to the Applied tab, where you track
 > its stage. No LinkedIn account is needed to review the app.
@@ -118,10 +118,10 @@ an older email account connect Drive by choice (Settings > Your data > Connect G
 
 **Full description**
 
-> Auto Apply helps you send more job applications with less typing, and keeps track of every one.
+> JSTB helps you send more job applications with less typing, and keeps track of every one.
 >
 > • Find jobs: one tap opens a search for each job title you want, on LinkedIn or other job sites
-> • Collect them: on any job, tap Share and pick Auto Apply, or paste the link
+> • Collect them: on any job, tap Share and pick JSTB, or paste the link
 > • Fill forms fast: on company sites, "Fill the form" puts in your answers and offers your CV; you check it and send it
 > • Your answers, ready to paste: salary, notice period, years of experience, links... one tap copies one
 > • New questions: type the question a form asks and get an answer based on your CV
@@ -133,7 +133,7 @@ an older email account connect Drive by choice (Settings > Your data > Connect G
 > so every phone you sign in on has them, and in your own Google Drive. You sign in with Google; AI help is switched
 > on for your account by the service.
 >
-> Auto Apply is not affiliated with, endorsed by or sponsored by LinkedIn or any job site.
+> JSTB is not affiliated with, endorsed by or sponsored by LinkedIn or any job site.
 
 **Graphics**: `icon-512.png`, `feature-graphic-1024x500.png` and phone screenshots (1080 x 1920) from
 `play-store-kit` (made with made-up employers; replace them with your own when you have real ones).

@@ -102,9 +102,9 @@ final class Notifs {
     // ------------------------------------------------------------------ running
     static Notification running(Context c, Map<String, Object> status, String sub) {
         String state = Json.str(status, "state");
-        String title = "question".equals(state) ? "Auto Apply · question for you"
-                : "signin".equals(state) ? "Auto Apply · sign in to LinkedIn"
-                : "waiting".equals(state) ? "Auto Apply · waiting" : "Auto Apply · working";
+        String title = "question".equals(state) ? "JSTB · question for you"
+                : "signin".equals(state) ? "JSTB · sign in to LinkedIn"
+                : "waiting".equals(state) ? "JSTB · waiting" : "JSTB · working";
         String text = Json.str(status, "message");
         Notification.Builder b = builder(c, CH_RUN)
                 .setContentTitle(title)
@@ -310,7 +310,7 @@ final class Notifs {
     static void installPrompt(Context c, Intent confirm) {
         PendingIntent pi = PendingIntent.getActivity(c, 60, confirm, immutable());
         Notification.Builder b = builder(c, CH_ASK)
-                .setContentTitle("Auto Apply update is ready")
+                .setContentTitle("JSTB update is ready")
                 .setContentText("Tap to install it.")
                 .setAutoCancel(true)
                 .setContentIntent(pi);
@@ -319,7 +319,7 @@ final class Notifs {
 
     static void updated(Context c, String version) {
         Notification.Builder b = builder(c, CH_BRIEF)
-                .setContentTitle("Auto Apply updated to " + version)
+                .setContentTitle("JSTB updated to " + version)
                 .setContentText("Tap to open it.")
                 .setAutoCancel(true)
                 .setContentIntent(openApp(c, "dashboard", 61));

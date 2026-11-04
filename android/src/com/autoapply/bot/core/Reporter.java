@@ -243,12 +243,12 @@ public final class Reporter implements Store.Listener {
                 endPending = false;
             }
             if (isRunning && running) {
-                stopRun("You were signed out of your Auto Apply account. Sign in again in Settings.");
+                stopRun("You were signed out of your JSTB account. Sign in again in Settings.");
             }
             return true;  // nothing to retry until you sign in again
         } catch (RuntimeException e) {
             if (isRunning && running && Util.now() - lastOk > giveUpAfter) {
-                stopRun("Lost contact with the Auto Apply server for " + Math.round(giveUpAfter / 60) + " minutes. Start again "
+                stopRun("Lost contact with the JSTB server for " + Math.round(giveUpAfter / 60) + " minutes. Start again "
                         + "when the internet is back.");
             }
             return false;

@@ -661,13 +661,13 @@ public final class Api {
         } catch (Ai.FatalAIError e) {
             throw new IllegalArgumentException(e.getMessage());
         } catch (RuntimeException e) {
-            throw new IllegalArgumentException("Could not reach the Auto Apply server: " + Util.shortError(e, 100));
+            throw new IllegalArgumentException("Could not reach the JSTB server: " + Util.shortError(e, 100));
         }
         return Json.obj("ok", true, "message", "Connected. The AI works" + (ai.servedBy.isEmpty() ? "" : " (" + ai.servedBy + ")") + ".",
                 "account", engine.account.info());
     }
 
-    // ------------------------------------------------------------------ your Auto Apply account
+    // ------------------------------------------------------------------ your JSTB account
     private Object account(String what, Map<String, Object> b) {
         Account acc = engine.account;
         try {
@@ -845,11 +845,11 @@ public final class Api {
         } else if ("debug".equals(what)) {
             f = engine.debugZip;
             mime = "application/zip";
-            title = "Auto Apply debug.zip";
+            title = "JSTB debug.zip";
         } else {
             f = Util.logFile;
             mime = "text/plain";
-            title = "Auto Apply log";
+            title = "JSTB log";
         }
         if (f == null || !f.isFile()) {
             throw new IllegalArgumentException("Nothing to share yet.");

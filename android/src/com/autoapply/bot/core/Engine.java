@@ -81,7 +81,7 @@ public final class Engine {
         }
         Map<String, Object> setup = config.status(config.load());
         if (!account.signedIn()) {
-            return "Sign in to your Auto Apply account first.";
+            return "Sign in to your JSTB account first.";
         }
         if (!Json.bool(setup, "has_cv")) {
             return "Add your CV in Settings first.";
@@ -219,18 +219,18 @@ public final class Engine {
     /** Signed in, and Pro is on. Returns the problem, or null. */
     String checkAccount() {
         if (!account.signedIn()) {
-            return "Sign in to your Auto Apply account first.";
+            return "Sign in to your JSTB account first.";
         }
         try {
             Map<String, Object> me = account.refresh();
             return Json.bool(me, "pro") ? null : NOT_ACTIVE;
         } catch (Account.AuthError e) {
-            return "You were signed out of your Auto Apply account. Sign in again in Settings.";
+            return "You were signed out of your JSTB account. Sign in again in Settings.";
         } catch (Account.ServerError e) {
             return e.getMessage();
         } catch (RuntimeException e) {
-            log("Could not reach the Auto Apply server: " + Util.shortError(e));
-            return "Could not reach the Auto Apply server. Check the internet connection and start again.";
+            log("Could not reach the JSTB server: " + Util.shortError(e));
+            return "Could not reach the JSTB server. Check the internet connection and start again.";
         }
     }
 

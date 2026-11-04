@@ -1,4 +1,4 @@
-# JSTB: Auto Apply
+# JSTB: JSTB
 
 | Folder | What |
 |---|---|
@@ -55,7 +55,7 @@ AI answer (all of them).
 Each user's CV, setup answers, "Your info", settings and jobs are kept in their account on the server: a new phone gets
 them when they sign in, and a change on one phone reaches the others within a couple of minutes (or right away with
 Sync now). With Google Drive connected (it is, for accounts made with Google; others connect it in Settings > Your
-data), the server keeps an **Auto Apply** folder in their Drive the same, both ways: the CV, **My answers** and **My
+data), the server keeps an **JSTB** folder in their Drive the same, both ways: the CV, **My answers** and **My
 jobs** (Google Sheets). Edits there come back to the app, and an account made again with the same Google account gets
 everything back from that folder.
 

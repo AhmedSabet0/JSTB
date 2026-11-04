@@ -1,4 +1,4 @@
-"""Google Drive: each user's "Auto Apply" folder, kept the same as their data on this server, both ways.
+"""Google Drive: each user's "JSTB" folder, kept the same as their data on this server, both ways.
 
 The folder has the CV (the PDF or text file), "My answers" (a Google Sheet: the setup answers, the job search, the
 notes for the AI and every fact of "Your info") and "My jobs" (a Google Sheet: jobs to apply to and every application,
@@ -133,7 +133,7 @@ MESSAGES = {
     "api_off": "The Google Drive or Google Sheets API is turned off for the server's Google project.",
     "rate": "Google asked to slow down; it tries again in a few minutes.",
     "net": "Could not reach Google; it tries again in a few minutes.",
-    "gone": "A file of your Auto Apply folder was not found; the next sync makes it again.",
+    "gone": "A file of your JSTB folder was not found; the next sync makes it again.",
 }
 
 
@@ -803,7 +803,7 @@ async def _ensure_folder(s, link, st):
             if key in ("cv", "answers", "jobs") and key not in st["files"]:
                 st["files"][key] = {"id": f["id"], "reused": True}
     else:
-        fid = (await s.create({"name": "Auto Apply", "mimeType": FOLDER_MIME, "appProperties": {"autoapply": "folder"}}))["id"]
+        fid = (await s.create({"name": "JSTB", "mimeType": FOLDER_MIME, "appProperties": {"autoapply": "folder"}}))["id"]
     with db.tx() as t:
         t.execute("UPDATE drive_links SET folder_id = ? WHERE user_id = ?", (fid, link["user_id"]))
     return fid
@@ -1039,7 +1039,7 @@ def id_claims(id_token):
         raise DriveError("google", "Google did not say who signed in. Try again.")
     if claims.get("iss") not in ("https://accounts.google.com", "accounts.google.com") or \
             claims.get("aud") != db.settings().get("google_client_id") or float(claims.get("exp") or 0) < time.time() - 60:
-        raise DriveError("google", "That Google sign-in is not for Auto Apply, or it ran out. Try again.")
+        raise DriveError("google", "That Google sign-in is not for JSTB, or it ran out. Try again.")
     if not claims.get("sub") or not claims.get("email") or claims.get("email_verified") not in (True, "true"):
         raise DriveError("unverified", "That Google account has no verified email address.")
     return claims
@@ -1049,7 +1049,7 @@ async def link_tokens(uid, data, email=""):
     """Keep the Drive tokens of a sign-in (Connect Google Drive, or Sign in with Google), then sync in the background.
     Returns the Google account's email."""
     if SCOPE not in str(data.get("scope") or "").split():
-        raise DriveError("scope", "Auto Apply needs to see and make the files it uses in your Drive. Try again and tick "
+        raise DriveError("scope", "JSTB needs to see and make the files it uses in your Drive. Try again and tick "
                                   "that box.")
     refresh = str(data.get("refresh_token") or "")
     access = str(data.get("access_token") or "")

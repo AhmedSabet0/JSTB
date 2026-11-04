@@ -1,4 +1,4 @@
-/* Auto Apply admin page: users, Pro, applications, Stop, AI settings. */
+/* JSTB admin page: users, Pro, applications, Stop, AI settings. */
 (() => {
   'use strict';
 

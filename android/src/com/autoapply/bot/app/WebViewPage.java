@@ -263,7 +263,7 @@ public final class WebViewPage implements Page {
             }
         }, new Handler(frameThread.getLooper()));
         DisplayManager dm = (DisplayManager) app.getSystemService(Context.DISPLAY_SERVICE);
-        screen = dm.createVirtualDisplay("Auto Apply bot page", widthPx, heightPx,
+        screen = dm.createVirtualDisplay("JSTB bot page", widthPx, heightPx,
                 app.getResources().getDisplayMetrics().densityDpi, frames.getSurface(),
                 DisplayManager.VIRTUAL_DISPLAY_FLAG_PRESENTATION | DisplayManager.VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY);
         if (screen == null) {

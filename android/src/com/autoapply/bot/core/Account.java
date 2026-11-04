@@ -9,7 +9,7 @@ import java.net.URL;
 import java.util.Locale;
 import java.util.Map;
 
-/** Your Auto Apply account on the server: sign up / sign in, whether Pro is on, and the token that the AI requests
+/** Your JSTB account on the server: sign up / sign in, whether Pro is on, and the token that the AI requests
  *  and the reports use. The OpenRouter key stays on the server; the app only ever holds this token. */
 public final class Account {
     /** The server built into the app. A server typed in the app (when none is built in) is saved in account.json. */

@@ -55,7 +55,7 @@ final class SelfUpdate {
                 p.setUpdate("permission", 0, "Version " + version + " is out. Tap Download and install: Android asks once to allow it.");
                 return;
             }
-            p.setUpdate("permission", 0, "Allow \"Install unknown apps\" for Auto Apply (Android asks once), then tap Download and install again.");
+            p.setUpdate("permission", 0, "Allow \"Install unknown apps\" for JSTB (Android asks once), then tap Download and install again.");
             p.main.post(new Runnable() {
                 @Override
                 public void run() {
@@ -69,7 +69,7 @@ final class SelfUpdate {
                             p.app.startActivity(i);
                         }
                     } catch (RuntimeException e) {
-                        p.setUpdate("permission", 0, "Open Settings > Apps > Auto Apply > Install unknown apps, allow it, then try again.");
+                        p.setUpdate("permission", 0, "Open Settings > Apps > JSTB > Install unknown apps, allow it, then try again.");
                     }
                 }
             });
@@ -170,7 +170,7 @@ final class SelfUpdate {
         }
     }
 
-    /** Make sure the file is a newer Auto Apply signed with the same key; returns a problem, or null. */
+    /** Make sure the file is a newer JSTB signed with the same key; returns a problem, or null. */
     @SuppressWarnings("deprecation")
     private static String checkApk(AndroidPlatform p, File apk) {
         PackageManager pm = p.app.getPackageManager();
@@ -179,7 +179,7 @@ final class SelfUpdate {
             return "The downloaded file is not a valid Android app.";
         }
         if (!p.app.getPackageName().equals(info.packageName)) {
-            return "The downloaded file is not Auto Apply.";
+            return "The downloaded file is not JSTB.";
         }
         try {
             PackageInfo mine = pm.getPackageInfo(p.app.getPackageName(), PackageManager.GET_SIGNATURES);
