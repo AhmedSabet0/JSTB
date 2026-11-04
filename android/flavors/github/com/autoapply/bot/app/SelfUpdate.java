@@ -107,6 +107,11 @@ final class SelfUpdate {
         }, "update").start();
     }
 
+    static boolean hasReady(AndroidPlatform p) {
+        File apk = readyApk;
+        return apk != null && apk.isFile() && "ready".equals(Json.str(p.upd, "state"));
+    }
+
     /** Installs the update that waits (when the screen turned off, or Install now). */
     static void installReady(final AndroidPlatform p) {
         final File apk = readyApk;

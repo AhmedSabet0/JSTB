@@ -1394,7 +1394,8 @@
   // ------------------------------------------------------------------ settings
   const LIST_KEYS = ['SKIP_COMPANIES', 'SKIP_TITLE_WORDS'];
   const PLAIN_KEYS = ['LOCATION', 'DATE_POSTED', 'PER_HOUR', 'PER_DAY', 'MIN_SCORE', 'ASK_TIMEOUT_MIN', 'UPDATE_SOURCE', 'ABOUT_ME',
-    'DAILY_GOAL'];
+    'DAILY_GOAL', 'SEARCH_EVERY_MIN'];
+  let settingsInfoAsked = false;
   async function loadSettings() {
     try {
       const d = await api('/api/settings');
@@ -1418,6 +1419,10 @@
       if (!$('s-DATE_POSTED').value) $('s-DATE_POSTED').value = 'week';
       $('min-score-val').textContent = `${$('s-MIN_SCORE').value}/10`;
       settingsLive();
+      if (!settingsInfoAsked && acc().signed_in && !acc().google) {   // does the server offer Sign in with Google?
+        settingsInfoAsked = true;
+        api('/api/account/info', {}).then((r) => { if (state) state.account = r.account; renderAccountCard(); }).catch(() => {});
+      }
     } catch (e) { toast(e.message, true); }
   }
   function settingsLive() {
@@ -1478,6 +1483,7 @@
     $('btn-acc-check').hidden = !a.signed_in;
     $('btn-acc-out').hidden = !a.signed_in;
     $('btn-acc-signin').hidden = !!a.signed_in;
+    $('btn-acc-google').hidden = !(a.signed_in && !a.google && a.google_signin);
     $('acc-del-box').hidden = !a.signed_in;
     $('acc-server-box').hidden = !!a.server_built_in;
     if (!a.server_built_in && document.activeElement !== $('s-server')) $('s-server').value = (a.server || '').replace(/^https:\/\//, '');
@@ -1485,6 +1491,13 @@
     $('privacy-link').hidden = !priv;
     if (priv) $('privacy-link').href = priv;
   }
+  $('btn-acc-google').addEventListener('click', async () => {
+    try {
+      await api('/api/account/google-link', {});
+      googleLinking = true;
+      toast('Pick your Google account in the browser, then come back here.');
+    } catch (e) { toast(e.message, true); }
+  });
   $('btn-acc-check').addEventListener('click', async () => {
     $('acc-out').textContent = 'Checking…';
     try {
@@ -2318,8 +2331,16 @@
   $('ask-done').addEventListener('click', closeSheets);
 
   // Back from the LinkedIn app, or from a company's site in the app's browser.
+  let googleLinking = false;   // back from adding Google to this account: show it
   window.aaResumed = () => {
     driveResumed();
+    if (googleLinking) {
+      googleLinking = false;
+      setTimeout(() => api('/api/account/refresh', {}).then((r) => {
+        if (r.account && r.account.google) toast('Google is added: you can sign in with it from now on.');
+        refresh();
+      }).catch(() => {}), 1500);
+    }
     googleResumed();
     if (awaiting && Date.now() - awaiting.at > 3000) {
       const id = awaiting.id;

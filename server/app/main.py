@@ -355,6 +355,19 @@ async def google_signed_in(row, code):
     if not email:
         raise drive.DriveError("unverified", "That Google account has no usable email address.")
     s = db.settings()
+    if row["purpose"] == "link":        # Google added to the account that asked: it signs in with it from then on
+        uid = row["user_id"]
+        other = db.one("SELECT id, email FROM users WHERE google_sub = ? AND id != ?", (sub, uid))
+        if other is not None:
+            raise drive.DriveError("other", f"{email} already signs in to another Auto Apply account ({other['email']}).")
+        with db.tx() as t:
+            t.execute("UPDATE users SET google_sub = ? WHERE id = ?", (sub, uid))
+        if drive.SCOPE in str(data.get("scope") or "").split():
+            try:
+                await drive.link_tokens(uid, data, email)
+            except drive.DriveError as e:
+                log.info("user %s: Google added, Drive not linked: %s", uid, e.message)
+        return pages.google_linked(email)
     user = db.one("SELECT * FROM users WHERE google_sub = ?", (sub,)) or db.one("SELECT * FROM users WHERE email = ?", (email,))
     if row["purpose"] == "delete":
         if user is None:
@@ -706,6 +719,20 @@ async def save_my_cv(request: Request):
 async def my_drive(request: Request):
     user = current_user(request)
     return {"ok": True, "drive": drive.status(user["id"])}
+
+
+@app.post("/v1/me/google/link")
+async def link_google(request: Request):
+    """An account made with an email and a password adds Google: it signs in with Google from then on (any Google
+    account the user picks), and the same consent connects that Google Drive."""
+    user = current_user(request)
+    if not google_limit.allow(client_ip(request)):
+        raise ApiError(429, "Too many attempts. Wait a few minutes and try again.", "rate_limited")
+    try:
+        url = drive.login_url("link", "", "", user["id"])
+    except drive.DriveError as e:
+        raise ApiError(403, e.message, "google_off")
+    return {"ok": True, "url": url}
 
 
 @app.post("/v1/me/drive/link")

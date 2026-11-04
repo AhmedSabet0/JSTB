@@ -425,6 +425,9 @@
       <div class="field"><label for="s-MIN_SCORE">Apply when the job fits your CV at least <b id="min-score-val"></b></label>
         <input id="s-MIN_SCORE" type="range" min="0" max="10" step="1">
         <p class="hint">Lower it to apply to more jobs; raise it to apply only to close matches.</p></div>
+      <div class="field"><label for="s-SEARCH_EVERY_MIN">Search again after (minutes)</label>
+        <input id="s-SEARCH_EVERY_MIN" type="number" inputmode="numeric" min="5" max="720">
+        <p class="hint">After it went through all your job titles, it waits this long and searches again. It keeps going until you press Stop.</p></div>
       <div class="cols">
         <div class="field"><label for="s-PER_HOUR">At most per hour</label><input id="s-PER_HOUR" type="number" inputmode="numeric" min="1" max="30"></div>
         <div class="field"><label for="s-PER_DAY">At most per day</label><input id="s-PER_DAY" type="number" inputmode="numeric" min="1" max="300"></div>
@@ -451,6 +454,7 @@
       <div class="row wrap">
         <button id="btn-acc-check" class="btn" type="button">Check again</button>
         <button id="btn-acc-signin" class="btn primary" type="button" hidden>Sign in</button>
+        <button id="btn-acc-google" class="btn" type="button" hidden>Sign in with Google next time</button>
         <button id="btn-acc-out" class="btn" type="button">Sign out</button>
       </div>
       <p id="acc-out" class="hint" aria-live="polite"></p>

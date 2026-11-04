@@ -183,6 +183,14 @@ def signed_in(email, code):
 <script>setTimeout(function () {{ location.href = "{link}"; }}, 300);</script>""")
 
 
+def google_linked(email):
+    return page(f"Google added - {APP_NAME}", f"""<div class="card"><h1>Google is added to your account</h1>
+<p class="ok">From now on you can sign in with Google as <b>{e(email)}</b>, on any phone.</p>
+<p>Your <b>Auto Apply</b> folder in this Google Drive keeps your CV, answers and jobs.</p>
+<a class="btn" href="autoapply://drive">Back to Auto Apply</a></div>
+<script>setTimeout(function () {{ location.href = "autoapply://drive"; }}, 300);</script>""")
+
+
 def signin_failed(message):
     return page(f"Not signed in - {APP_NAME}", f"""<div class="card"><h1>You are not signed in</h1>
 <p class="bad">{e(message)}</p><p class="muted">Go back to the app and try again.</p>

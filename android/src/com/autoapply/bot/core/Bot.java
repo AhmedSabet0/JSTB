@@ -285,7 +285,12 @@ public final class Bot implements LinkedIn.Resolver, LinkedIn.Hooks {
             double left = wait;
             while (left > 0) {                // a yes you give meanwhile is sent right away
                 double chunk = Math.min(10, left);
-                sleep(chunk);
+                engine.betweenRounds = true;
+                try {
+                    sleep(chunk);
+                } finally {
+                    engine.betweenRounds = false;
+                }
                 left -= chunk;
                 if (!store.idsWithStatus("approved").isEmpty()) {
                     sendApproved();

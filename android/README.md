@@ -40,6 +40,9 @@ background, asks you questions it cannot answer (with suggestions from your CV),
 LinkedIn runs inside the app in a page drawn on a private virtual display; a foreground service keeps it going with the
 screen off. Details: `core/Bot.java`, `core/LinkedIn.java`, `assets/li.js`.
 
+It keeps going until you press Stop: after the last job title it waits `SEARCH_EVERY_MIN` (10 minutes by default,
+Settings > How auto apply works > Search again after) and searches again.
+
 You say yes before anything is sent (`APPROVE_FIRST`, on by default; Settings > How auto apply works):
 
 - Each form is filled up to Submit and closed without sending; the job's status is `ready` and its answers are kept.

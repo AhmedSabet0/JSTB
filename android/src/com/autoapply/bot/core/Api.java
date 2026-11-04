@@ -12,7 +12,7 @@ import java.util.Map;
 public final class Api {
     public static final String[] SETTINGS_KEYS = {"KEYWORDS", "LOCATION", "DATE_POSTED", "WORK_TYPE", "EXPERIENCE",
         "PAGES_PER_KEYWORD", "SEARCH_EVERY_MIN", "PER_HOUR", "PER_DAY", "MIN_SCORE", "SKIP_COMPANIES", "SKIP_TITLE_WORDS",
-        "NEW_QUESTIONS", "ASK_TIMEOUT_MIN", "UPDATE_SOURCE", "DAILY_GOAL", "AUTO_UPDATE", "APPROVE_FIRST"};
+        "NEW_QUESTIONS", "ASK_TIMEOUT_MIN", "UPDATE_SOURCE", "DAILY_GOAL", "AUTO_UPDATE", "APPROVE_FIRST", "SEARCH_EVERY_MIN"};
 
     /** Requests that change your data (it then goes to your account). */
     static final java.util.Set<String> CHANGES = new java.util.HashSet<String>(java.util.Arrays.asList("/api/settings",
@@ -190,13 +190,13 @@ public final class Api {
                 "source", engine.config.load().get("UPDATE_SOURCE"));
     }
 
-    /** Check in the background (auto checks run at most every 6 hours). */
+    /** Check in the background (auto checks run at most every 30 minutes). */
     void startUpdateCheck(final boolean force) {
         Map<String, Object> last = lastCheck;
         if (!selfUpdates() || checking) {
             return;
         }
-        if (!force && last != null && Util.now() - Json.dbl(last, "checked_at", 0) < 6 * 3600) {
+        if (!force && last != null && Util.now() - Json.dbl(last, "checked_at", 0) < 30 * 60) {
             autoInstall(last);  // checked lately: install what it found, if that was not tried yet
             return;
         }
@@ -230,12 +230,13 @@ public final class Api {
 
     private void autoInstall(Map<String, Object> r) {
         String v = Json.str(r, "version");
-        if (!Json.bool(r, "available") || v.isEmpty() || v.equals(autoTried) || !autoUpdates() || engine.running()
+        if (!Json.bool(r, "available") || v.isEmpty() || v.equals(autoTried) || !autoUpdates()
                 || Updater.compare(v, Json.str(engine.platform.appVersion(), "name")) <= 0) {
             return;
         }
         autoTried = v;
-        Util.log("Version " + v + " is out: downloading it (it installs when the screen turns off)");
+        Util.log("Version " + v + " is out: downloading it (it installs when the screen turns off"
+                + (engine.running() ? ", between rounds; auto apply starts again after it)" : ")"));
         engine.platform.installUpdate(Json.str(r, "url"), v, true);
     }
 
@@ -705,6 +706,10 @@ public final class Api {
                     acc.setServer(Json.str(b, "server"));
                 }
                 engine.platform.openLink(acc.googleStart(), "browser", "", "");
+                return Json.obj("ok", true);
+            }
+            if (what.equals("google-link")) {     // an email account adds Google (and its Drive)
+                engine.platform.openLink(acc.googleLink(), "browser", "", "");
                 return Json.obj("ok", true);
             }
             if (what.equals("google-claim")) {    // back in the app without the link from the page after Google

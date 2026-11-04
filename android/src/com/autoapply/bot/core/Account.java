@@ -265,6 +265,11 @@ public final class Account {
         return Json.str(r, "url");
     }
 
+    /** An account made with an email and a password adds Google: Google's page, to open in the browser. */
+    public String googleLink() {
+        return Json.str(call("POST", "/v1/me/google/link", Json.obj(), true), "url");
+    }
+
     /** One Google sign-in finishes at a time (the link and the app coming back can arrive together). */
     private final Object googleLock = new Object();
 

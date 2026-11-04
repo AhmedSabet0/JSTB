@@ -11,6 +11,10 @@ final class SelfUpdate {
         p.setUpdate("error", 0, "Updates come from Google Play.");
     }
 
+    static boolean hasReady(AndroidPlatform p) {
+        return false;
+    }
+
     static void installReady(AndroidPlatform p) {
         // Google Play installs updates
     }

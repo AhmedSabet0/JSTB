@@ -16,7 +16,7 @@ public final class Config {
         {"WORK_TYPE", ""},
         {"EXPERIENCE", ""},
         {"PAGES_PER_KEYWORD", "3"},
-        {"SEARCH_EVERY_MIN", "30"},
+        {"SEARCH_EVERY_MIN", "10"},   // the wait between rounds: short, so it keeps going
         {"PER_HOUR", "15"},
         {"PER_DAY", "60"},
         {"MIN_SCORE", "6"},

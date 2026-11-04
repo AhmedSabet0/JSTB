@@ -18,6 +18,22 @@ public final class UpdateReceiver extends BroadcastReceiver {
         String action = intent.getAction();
         if (Intent.ACTION_MY_PACKAGE_REPLACED.equals(action)) {
             Notifs.updated(context, Json.str(p.appVersion(), "name"));
+            final java.util.Map<String, Object> o = p.engine.takeResume();
+            if (o != null) {        // it was applying when the update came: it goes on
+                final AndroidPlatform pf = p;
+                final PendingResult pending = goAsync();
+                new Thread(new Runnable() {
+                    @Override
+                    public void run() {
+                        try {
+                            String mode = Json.bool(o, "dry_run") ? "dry" : Json.bool(o, "no_submit") ? "test" : "apply";
+                            pf.api.handle("/api/start", Json.stringify(Json.obj("mode", mode, "once", Json.bool(o, "once"))));
+                        } finally {
+                            pending.finish();
+                        }
+                    }
+                }).start();
+            }
             return;
         }
         if (!ACTION_STATUS.equals(action)) {

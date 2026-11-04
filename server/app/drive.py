@@ -1091,9 +1091,10 @@ async def finish(code, state):
     return await link_tokens(row["user_id"], await exchange(code, row["verifier"]))
 
 
-def login_url(purpose, app_challenge="", device=""):
-    """Google's page for Sign in with Google (purpose login: your account and your Drive in one go) or for deleting
-    an account on the web (purpose delete: only who you are)."""
+def login_url(purpose, app_challenge="", device="", user_id=0):
+    """Google's page for Sign in with Google (purpose login: your account and your Drive in one go), for adding
+    Google to an account that exists (purpose link, user_id: it signs in with Google from then on, and its Drive), or
+    for deleting an account on the web (purpose delete: only who you are)."""
     s = db.settings()
     if not configured(s):
         raise DriveError("off", "Google sign-in is not set up on the server yet.")
@@ -1103,13 +1104,15 @@ def login_url(purpose, app_challenge="", device=""):
     now = time.time()
     with db.tx() as t:
         t.execute("DELETE FROM login_states WHERE expires_at < ?", (now,))
-        t.execute("INSERT INTO login_states(state_hash, purpose, verifier, app_challenge, device, expires_at) "
-                  "VALUES (?, ?, ?, ?, ?, ?)", (security.token_hash(state), purpose, verifier, app_challenge, device[:80], now + 900))
-    scope = "openid email profile" + (" " + SCOPE if purpose == "login" else "")
+        t.execute("INSERT INTO login_states(state_hash, purpose, verifier, app_challenge, device, expires_at, user_id) "
+                  "VALUES (?, ?, ?, ?, ?, ?, ?)", (security.token_hash(state), purpose, verifier, app_challenge, device[:80],
+                                                  now + 900, int(user_id or 0)))
+    with_drive = purpose in ("login", "link")
+    scope = "openid email profile" + (" " + SCOPE if with_drive else "")
     params = {"client_id": s["google_client_id"], "redirect_uri": redirect_uri(), "response_type": "code", "scope": scope,
               "state": state, "code_challenge": challenge, "code_challenge_method": "S256",
-              "prompt": "select_account consent" if purpose == "login" else "select_account"}
-    if purpose == "login":
+              "prompt": "select_account consent" if with_drive else "select_account"}
+    if with_drive:
         params.update({"access_type": "offline", "include_granted_scopes": "true"})
     return AUTH_URL + "?" + urlencode(params)
 

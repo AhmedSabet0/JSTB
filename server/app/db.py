@@ -168,6 +168,7 @@ MIGRATIONS = [
     ("users", "data_rev", "INTEGER NOT NULL DEFAULT 0"),
     ("users", "data_at", "REAL"),
     ("users", "google_sub", "TEXT NOT NULL DEFAULT ''"),
+    ("login_states", "user_id", "INTEGER NOT NULL DEFAULT 0"),
 ]
 
 _local = threading.local()

@@ -337,9 +337,39 @@ public final class AndroidPlatform implements Platform {
             public void onReceive(Context c, Intent i) {
                 if (!engine.running()) {
                     SelfUpdate.installReady(AndroidPlatform.this);
+                } else if (engine.betweenRounds && SelfUpdate.hasReady(AndroidPlatform.this)) {
+                    new Thread(new Runnable() {   // between rounds: stop, install, and it starts again after the update
+                        @Override
+                        public void run() {
+                            engine.saveResume();
+                            engine.stop();
+                            try {
+                                engine.join(90000);
+                            } catch (InterruptedException e) {
+                                return;
+                            }
+                            if (!engine.running()) {
+                                SelfUpdate.installReady(AndroidPlatform.this);
+                            }
+                        }
+                    }, "update-between-rounds").start();
                 }
             }
         };
+        if (SelfUpdate.AVAILABLE) {           // a new version is looked for every 30 minutes while the app is alive
+            main.postDelayed(new Runnable() {
+                @Override
+                public void run() {
+                    new Thread(new Runnable() {
+                        @Override
+                        public void run() {
+                            api.handle("/api/update/check", "{\"auto\": true}");
+                        }
+                    }, "update-timer").start();
+                    main.postDelayed(this, 30 * 60 * 1000L);
+                }
+            }, 30 * 60 * 1000L);
+        }
         IntentFilter f = new IntentFilter(Intent.ACTION_SCREEN_OFF);
         if (Build.VERSION.SDK_INT >= 33) {
             app.registerReceiver(off, f, Context.RECEIVER_NOT_EXPORTED);

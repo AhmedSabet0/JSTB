@@ -187,6 +187,8 @@ final class Notifs {
 
     // ------------------------------------------------------------------ ready to send: your yes first
     /** One notification for the applications filled up to Submit: Apply / Skip for one, Apply all / See them for more. */
+    private static int lastReady = 0;
+
     static void ready(Context c, List<Map<String, Object>> items) {
         List<Map<String, Object>> waiting = new ArrayList<Map<String, Object>>();
         for (Map<String, Object> j : items) {
@@ -195,14 +197,17 @@ final class Notifs {
             }
         }
         if (waiting.isEmpty()) {
+            lastReady = 0;
             nm(c).cancel(ID_READY);
             return;
         }
         Map<String, Object> first = waiting.get(0);
+        boolean more = waiting.size() > lastReady;      // a new one: it drops down again; fewer: quietly
+        lastReady = waiting.size();
         Notification.Builder b = builder(c, CH_READY)
                 .setAutoCancel(false)
-                .setOnlyAlertOnce(true)
-                .setCategory(Notification.CATEGORY_RECOMMENDATION)
+                .setOnlyAlertOnce(!more)
+                .setCategory(Notification.CATEGORY_REMINDER)
                 .setContentIntent(openApp(c, "ready", 70));
         if (waiting.size() == 1) {
             Map<String, String> one = new java.util.HashMap<String, String>();

@@ -525,6 +525,28 @@ def main_test():
         check("an account made with a password, signing in with Google for the same email: the same account", me["id"] == uid
               and me["google"] and me["has_password"] and not r.json()["created"], me)
         check("its Drive is now that Google account's", c.get("/v1/me/drive", headers=P1).json()["drive"]["email"] == "sara@example.com")
+        c.post("/admin/api/settings", headers=A, json={"password_signups": True})
+        r = c.post("/v1/auth/signup", json={"email": "omar@example.com", "password": "omar-pass-123", "name": "Omar"})
+        c.post("/admin/api/settings", headers=A, json={"password_signups": False})
+        PO = auth(r.json()["token"])
+        omar = c.get("/v1/me", headers=PO).json()["user"]
+        start = c.post("/v1/me/google/link", headers=PO, json={}).json().get("url", "")
+        fake.email, fake.name = "omar.g@gmail.com", "Omar"
+        page = c.get("/oauth/google/callback", params=fake.consent(start))
+        check("an email account adds Google (any Google address): the page says so", page.status_code == 200
+              and "Google is added" in page.text and "drive.file" in start, page.text[-300:])
+        check("and its Drive is connected with the same consent", c.get("/v1/me/drive", headers=PO).json()["drive"]["email"]
+              == "omar.g@gmail.com")
+        url, page, code = google_login("omar.g@gmail.com", V, "Omar")
+        r = c.post("/v1/auth/google/finish", json={"code": code, "verifier": V})
+        me = c.get("/v1/me", headers=auth(r.json()["token"])).json()["user"]
+        check("from then on Sign in with Google opens that same account", me["id"] == omar["id"] and me["google"]
+              and me["has_password"] and not r.json()["created"], me)
+        start = c.post("/v1/me/google/link", headers=PO, json={}).json()["url"]
+        fake.email = "nada@gmail.com"
+        page = c.get("/oauth/google/callback", params=fake.consent(start))
+        check("a Google account that signs in to another account cannot be added", page.status_code == 400
+              and "another Auto Apply account" in page.text, page.text[-300:])
         c.post("/admin/api/settings", headers=A, json={"signups_open": False})
         url, page, code = google_login("someone@gmail.com", V)
         check("new accounts closed: a new Google account is told", page.status_code == 400 and "closed" in page.text and not code)
