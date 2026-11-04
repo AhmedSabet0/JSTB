@@ -898,12 +898,6 @@ public final class Profile {
         }
         return new Hit(v, "your city");
     }
-        if (!has(q, "\\bcity\\b|^location|location \\(city\\)|current location|where (do|are) you (live|based|located|reside|currently)"
-                + "|current(ly)? (living|located|based|residing)|place of residence|home ?town|your address|residence|\\bbased in\\b")) {
-            return null;
-        }
-        return new Hit(v, "where you live");
-    }
 
     private Hit heardAbout(String q, List<String> opts) {
         if (!has(q, "how did you (hear|find|learn|come across)|where did you (hear|find|see)|source of (this )?(application|job)")) {
