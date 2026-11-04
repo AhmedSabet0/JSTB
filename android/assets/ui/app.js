@@ -245,8 +245,15 @@
     kickSuggest(false);
   }
 
+  // Sign in with Google comes first when the server offers it (and has its address built in).
+  const googleFirst = () => !!acc().google_signin && !!acc().server_built_in && !acc().signed_in;
+  let welcomeInfo = false;
   function wShow(step) {
     wStep = step;
+    if (step === 'welcome' && !welcomeInfo && acc().server_built_in && !acc().signed_in) {
+      welcomeInfo = true;
+      api('/api/account/info', {}).then((r) => { if (state) state.account = r.account; wLive(); }).catch(() => {});
+    }
     document.querySelectorAll('.step').forEach((s) => { s.hidden = s.dataset.step !== step; });
     const parts = wParts();
     const at = parts.indexOf(step);
@@ -271,7 +278,10 @@
     const backBtn = $('w-back');
     backBtn.hidden = wStep === 'welcome';
     backBtn.textContent = 'Back';
-    const labels = { welcome: 'Get started', account: accLabel(), cv: 'Continue', answers: 'Save and continue',
+    const g1 = wStep === 'welcome' && googleFirst();
+    $('w-welcome-email').hidden = !g1;
+    $('w-welcome-acc').textContent = googleFirst() ? 'Sign in with Google' : 'Create your account';
+    const labels = { welcome: g1 ? 'Continue with Google' : 'Get started', account: accLabel(), cv: 'Continue', answers: 'Save and continue',
       jobs: 'Continue', linkedin: s.signed_in ? 'Continue' : 'Skip for now', done: auto() ? 'Start applying' : 'Find jobs' };
     if (!next.dataset.busy) next.textContent = labels[wStep] || 'Continue';
     next.disabled = (wStep === 'cv' && !s.has_cv) || !!next.dataset.busy;
@@ -279,7 +289,12 @@
       $('w-li-ok').hidden = !s.signed_in;
       $('w-li-btn').hidden = !!s.signed_in;
     }
-    if (wStep === 'done') permStates(document.querySelector('.step[data-step="done"]'));
+    if (wStep === 'done') {
+      permStates(document.querySelector('.step[data-step="done"]'));
+      const dr = (state.sync || {}).drive || {};
+      $('w-drive-done').hidden = !dr.connected;
+      $('w-drive-done-text').innerHTML = dr.connected ? `Google Drive is on: your <b>Auto Apply</b> folder${dr.email ? ` in ${esc(dr.email)}` : ''} keeps your CV, answers and jobs.` : '';
+    }
     if (wStep === 'cv') cvStates();
   }
 
@@ -287,7 +302,8 @@
     const next = $('w-next');
     if (next.disabled) return;
     try {
-      if (wStep === 'welcome') wShow('account');
+      if (wStep === 'welcome' && googleFirst()) await googleStart('welcome');
+      else if (wStep === 'welcome') wShow('account');
       else if (wStep === 'account') await wAccount();
       else if (wStep === 'cv') wShow('answers');
       else if (wStep === 'answers') { if (await saveProfile($('w-answers'))) wShow('jobs'); }
@@ -382,22 +398,26 @@
     wShow(first === 'welcome' || first === 'account' ? 'cv' : first);
     kickSuggest(false);
   }
-  $('w-google').addEventListener('click', async () => {
+  async function googleStart(where) {
     const a = acc();
     const body = {};
+    const err = where === 'welcome' ? $('w-welcome-err') : $('w-acc-err');
     if (!a.server_built_in) {
       body.server = $('w-acc-server').value.trim();
-      if (!body.server) { $('w-acc-err').textContent = 'Type the server address.'; $('w-acc-err').hidden = false; return; }
+      if (!body.server) { err.textContent = 'Type the server address.'; err.hidden = false; return; }
     }
-    $('w-acc-err').hidden = true;
+    err.hidden = true;
     try {
       await api('/api/account/google', body);
       $('w-google-wait').hidden = false;
+      $('w-welcome-wait').hidden = where !== 'welcome';
     } catch (e) {
-      $('w-acc-err').textContent = e.message;
-      $('w-acc-err').hidden = false;
+      err.textContent = e.message;
+      err.hidden = false;
     }
-  });
+  }
+  $('w-google').addEventListener('click', () => googleStart('account'));
+  $('w-welcome-email').addEventListener('click', () => wShow('account'));
   // Back in the app while a Google sign-in waits, without the link (the browser did not open the app): the app asks
   // the server whether Google's page is done. The link, when it comes, is handled first.
   let googleClaiming = false;
@@ -422,8 +442,10 @@
     let r = {};
     try { r = JSON.parse(raw); } catch (e) { r = { ok: false, error: 'Could not sign in. Try again.' }; }
     $('w-google-wait').hidden = true;
+    $('w-welcome-wait').hidden = true;
     if (r.ok === false) {
-      if (view === 'setup' && wStep === 'account') { $('w-acc-err').textContent = r.error; $('w-acc-err').hidden = false; }
+      if (view === 'setup' && wStep === 'welcome') { $('w-welcome-err').textContent = r.error; $('w-welcome-err').hidden = false; }
+      else if (view === 'setup' && wStep === 'account') { $('w-acc-err').textContent = r.error; $('w-acc-err').hidden = false; }
       else toast(r.error, true);
       return;
     }

@@ -139,6 +139,9 @@ public class UiServer {
         }));
         Ai.apiUrl = "http://127.0.0.1:" + mockPort + "/v1/chat/completions";
         TestServer.start(scratch, mockPort);  // the app's server; the setup types its address (none is built in here)
+        if (Boolean.getBoolean("builtIn")) {
+            com.autoapply.bot.core.Account.defaultServer = TestServer.base;   // like a release build: the server is built in
+        }
         com.autoapply.bot.core.Reporter.every = 0.5;
         com.autoapply.bot.core.Updater.githubApi = "http://127.0.0.1:" + mockPort + "/gh";
         com.autoapply.bot.core.Profile.ratesUrl = "http://127.0.0.1:" + mockPort + "/rates/";

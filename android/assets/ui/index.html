@@ -33,13 +33,16 @@
       <p class="lead" data-noauto>Collect jobs from LinkedIn or any site in one list. The app fills the forms with your answers and writes cover letters. You check each one and send it.</p>
       <p class="lead" data-auto>Answer a few questions once. Then the app applies to LinkedIn Easy Apply jobs that fit your CV, in the background, and tells you what it sent. Jobs you share to it get help too.</p>
       <ul class="plain-list">
-        <li><span><b>Create your account</b> (it connects the AI that reads jobs and forms)</span></li>
+        <li><span><b id="w-welcome-acc">Create your account</b> (it connects the AI that reads jobs and forms)</span></li>
         <li><span><b>Add your CV</b></span></li>
         <li><span><b>Answer the questions forms ask most</b>, like your expected salary</span></li>
         <li><span><b>Pick the jobs</b> to look for</span></li>
         <li data-auto><span><b>Sign in to LinkedIn</b></span></li>
       </ul>
       <p class="muted">Takes about 3 minutes.</p>
+      <p id="w-welcome-wait" class="note" hidden>Choose your Google account in the browser, then come back here.</p>
+      <p id="w-welcome-err" class="error-msg" hidden></p>
+      <button id="w-welcome-email" class="linklike center-link" type="button" hidden>Use an email and a password instead</button>
     </div>
 
     <div class="step" data-step="account">
@@ -129,6 +132,9 @@
     <div class="step" data-step="done">
       <svg class="hero-mark good" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 16.2 4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4z"/></svg>
       <h1>All set</h1>
+      <p id="w-drive-done" class="done-badge" hidden>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 16.2 4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4z"/></svg>
+        <span id="w-drive-done-text"></span></p>
       <div data-noauto>
         <p class="lead">This is how you apply with the app:</p>
         <ol class="how">
