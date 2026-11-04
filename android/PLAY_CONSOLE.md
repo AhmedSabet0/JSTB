@@ -9,7 +9,12 @@ The Play build (`FLAVOR=play`) is the "apply with you" app: it collects jobs you
 LinkedIn app or in its own browser, fills company application forms with your answers (you check and send them),
 writes cover letters, and tracks your applications. It **never sends an application by itself, never signs in to or
 drives LinkedIn, and runs nothing in the background**. The automatic LinkedIn bot exists only in the GitHub build
-(`assets/li.js`, the background service and their permissions are left out of the bundle).
+(`assets/li.js`, the LinkedIn driver `core/LinkedIn.java` (a stub without any LinkedIn code takes its place), the
+background service and their permissions are left out of the bundle).
+
+A test copy of the Play build that installs next to the GitHub build (own package, own name):
+`APP_ID=com.autoapply.bot.playtest APP_LABEL="JSTB Play" APK=1 FLAVOR=play ./build.sh` gives
+`out/play/AutoApply-play.apk`. Do not upload that one: the Play release keeps the package `com.autoapply.bot`.
 
 About "ask before sending" (3.2, GitHub build): there the bot fills each Easy Apply form and waits for the user's
 **Apply** in a notification. That is a better experience, but it does not make the bot fit for Play: the app still

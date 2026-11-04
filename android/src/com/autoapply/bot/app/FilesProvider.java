@@ -14,7 +14,7 @@ import java.io.FileNotFoundException;
 /** Lets other apps (WhatsApp, Gmail, Drive...) read the files you share: the CSV, the log and debug.zip. Also gives
  *  your CV to a company's site you opened in the app, when you attach it to an application (cv/your-name.pdf). */
 public final class FilesProvider extends ContentProvider {
-    static final String AUTHORITY = "com.autoapply.bot.files";
+    static final String AUTHORITY = BuildConfig.FILES_AUTHORITY;
 
     static Uri uriFor(File f) {
         return Uri.parse("content://" + AUTHORITY + "/" + Uri.encode(f.getName()));

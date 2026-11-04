@@ -50,6 +50,16 @@ if [ "$FLAVOR" = play ]; then
 else
   cp AndroidManifest.xml "$OUT/AndroidManifest.xml"
 fi
+# A test copy that installs next to the real app: APP_ID=com.autoapply.bot.playtest APP_LABEL="JSTB Play test"
+APP_ID=${APP_ID:-}
+if [ -n "$APP_ID" ]; then
+  sed -i "s/com\.autoapply\.bot\.files/$APP_ID.files/" "$OUT/AndroidManifest.xml"
+fi
+FILES_AUTHORITY="${APP_ID:-com.autoapply.bot}.files"
+mkdir -p "$OUT/res" && cp -r res/. "$OUT/res/"
+if [ -n "${APP_LABEL:-}" ]; then
+  sed -i "s|<string name=\"app_name\">[^<]*</string>|<string name=\"app_name\">$APP_LABEL</string>|" "$OUT/res/values/strings.xml"
+fi
 [ -n "${VERSION_CODE:-}" ] && sed -i "s/android:versionCode=\"[0-9]*\"/android:versionCode=\"$VERSION_CODE\"/" "$OUT/AndroidManifest.xml"
 [ -n "${VERSION_NAME:-}" ] && sed -i "s/android:versionName=\"[^\"]*\"/android:versionName=\"$VERSION_NAME\"/" "$OUT/AndroidManifest.xml"
 
@@ -60,6 +70,7 @@ package com.autoapply.bot.app;
 public final class BuildConfig {
     public static final String FLAVOR = "$FLAVOR";
     public static final String SERVER_URL = "$SERVER_URL";
+    public static final String FILES_AUTHORITY = "$FILES_AUTHORITY";
 
     private BuildConfig() {
     }
@@ -73,9 +84,9 @@ compile_java() {
 }
 
 if [ "$FLAVOR" = github ]; then
-  aapt package -f -m -J "$OUT/gen" -M "$OUT/AndroidManifest.xml" -S res -I "$ANDROID_JAR"
+  aapt package -f -m -J "$OUT/gen" -M "$OUT/AndroidManifest.xml" -S "$OUT/res" -I "$ANDROID_JAR"
   compile_java
-  aapt package -f -M "$OUT/AndroidManifest.xml" -S res -A "$OUT/assets" -I "$ANDROID_JAR" -F "$OUT/unsigned.apk"
+  aapt package -f -M "$OUT/AndroidManifest.xml" -S "$OUT/res" -A "$OUT/assets" -I "$ANDROID_JAR" -F "$OUT/unsigned.apk"
   (cd "$OUT" && aapt add unsigned.apk classes.dex >/dev/null)
   zipalign -f -p 4 "$OUT/unsigned.apk" "$OUT/aligned.apk"
   apksigner sign --ks "$KS" --ks-pass "pass:$KS_PASS" --key-pass "pass:$KS_PASS" --ks-key-alias autoapply \
@@ -86,9 +97,9 @@ if [ "$FLAVOR" = github ]; then
 fi
 
 # ---- Google Play: an Android App Bundle (resources in protobuf format from aapt2, assembled by bundletool)
-aapt2 compile --dir res -o "$OUT/res.zip"
+aapt2 compile --dir "$OUT/res" -o "$OUT/res.zip"
 aapt2 link --proto-format -o "$OUT/base-proto.apk" -I "$ANDROID_JAR" --manifest "$OUT/AndroidManifest.xml" \
-  -A "$OUT/assets" --java "$OUT/gen" --auto-add-overlay "$OUT/res.zip"
+  -A "$OUT/assets" --java "$OUT/gen" --auto-add-overlay ${APP_ID:+--rename-manifest-package "$APP_ID"} "$OUT/res.zip"
 compile_java
 mkdir -p "$OUT/module"
 (cd "$OUT/module" && unzip -q ../base-proto.apk && mkdir -p manifest dex && mv AndroidManifest.xml manifest/ \
@@ -99,3 +110,10 @@ jarsigner -keystore "$KS" -storepass "$KS_PASS" -keypass "$KS_PASS" -sigalg SHA2
   "$OUT/AutoApply.aab" autoapply >/dev/null
 jarsigner -verify "$OUT/AutoApply.aab" | tail -1
 ls -la "$OUT/AutoApply.aab"
+if [ -n "${APK:-}" ]; then    # the bundle as one APK, to install by hand (a test copy)
+  rm -f "$OUT/app.apks"
+  java -jar "$BUNDLETOOL" build-apks --bundle="$OUT/AutoApply.aab" --output="$OUT/app.apks" --mode=universal \
+    --ks="$KS" --ks-pass="pass:$KS_PASS" --ks-key-alias=autoapply --key-pass="pass:$KS_PASS"
+  (cd "$OUT" && unzip -q -o app.apks universal.apk && mv universal.apk AutoApply-play.apk)
+  ls -la "$OUT/AutoApply-play.apk"
+fi
