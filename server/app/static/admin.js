@@ -557,10 +557,10 @@
     $('test-out').className = 'hint';
     $('test-out').textContent = 'Starting LinkedIn guest job collection & matching…';
     try {
-      const r = await api('/admin/api/collect-jobs');
+      const r = await api('/admin/api/collect-jobs', {});
       $('test-out').className = 'hint ok-text';
-      $('test-out').textContent = `Done! Collected & evaluated ${r.collected || 0} jobs.`;
-      toast(`Collected & processed ${r.collected || 0} jobs.`);
+      $('test-out').textContent = r.message || `Done! Collected & evaluated ${r.collected || 0} jobs.`;
+      toast(r.message || `Collected & processed ${r.collected || 0} jobs.`);
     } catch (e) {
       if (e instanceof SignedOut) { showLogin(); return; }
       $('test-out').className = 'hint bad-text';

@@ -1237,8 +1237,8 @@ async def admin_test_ai(request: Request):
                                    f"{reply[:40] or '(empty)'}"}
 
 
-@app.post("/admin/api/collect-jobs")
+@app.api_route("/admin/api/collect-jobs", methods=["GET", "POST"])
 async def admin_collect_jobs(request: Request):
     require_admin(request, write=True)
     count = await collector.run_collection_cycle()
-    return {"ok": True, "collected": count}
+    return {"ok": True, "message": f"Collected and evaluated {count} jobs successfully.", "collected": count}
