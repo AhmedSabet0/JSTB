@@ -739,7 +739,9 @@ public final class MainActivity extends Activity {
         s.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
         s.setBuiltInZoomControls(true);
         s.setDisplayZoomControls(false);
-        CookieManager.getInstance().setAcceptThirdPartyCookies(browserWeb, true);
+        CookieManager cm = CookieManager.getInstance();
+        cm.setAcceptCookie(true);
+        cm.setAcceptThirdPartyCookies(browserWeb, true);
         browserWeb.setWebViewClient(new WebViewClient() {
             @Override
             public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {

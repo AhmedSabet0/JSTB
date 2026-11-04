@@ -2146,9 +2146,13 @@
     $('sh-why').hidden = !j.why;
     $('sh-why').textContent = j.why || '';
     const li = j.channel === 'linkedin';
-    $('sh-open').textContent = li ? 'Apply on LinkedIn' : 'Fill and review';
-    $('sh-open-hint').textContent = li ? 'Opens in the LinkedIn app. Copy your answers from below while you fill the form.'
-      : 'Opens the form, fills it with your answers and shows what needs you. You check it and tap the site\'s button to send it.';
+    $('sh-open').textContent = 'Fill & Review (1-Tap Apply)';
+    $('sh-open-hint').textContent = 'Opens inside JSTB, fills the form with your CV data, and guides you to Submit with 1 tap.';
+    const extBtn = $('sh-open-ext');
+    if (extBtn) {
+      extBtn.hidden = !li;
+      extBtn.textContent = 'Or open in official LinkedIn app';
+    }
     if (first) {
       renderAnswers();
       $('sh-q').value = '';
@@ -2273,10 +2277,19 @@
     const j = findJob(sheetId);
     if (!j) return;
     try {
-      await api('/api/copilot/open', { id: j.id, fill: j.channel !== 'linkedin' });
-      if (j.channel === 'linkedin') awaiting = { id: j.id, at: Date.now() };
+      await api('/api/copilot/open', { id: j.id, fill: true, external: false });
     } catch (e) { toast(e.message, true); }
   });
+  if ($('sh-open-ext')) {
+    $('sh-open-ext').addEventListener('click', async () => {
+      const j = findJob(sheetId);
+      if (!j) return;
+      try {
+        await api('/api/copilot/open', { id: j.id, external: true });
+        awaiting = { id: j.id, at: Date.now() };
+      } catch (e) { toast(e.message, true); }
+    });
+  }
   $('sh-skip').addEventListener('click', async () => {
     const j = findJob(sheetId);
     if (!j) return;

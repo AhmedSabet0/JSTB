@@ -200,12 +200,15 @@
   // ---------------------------------------------------------------- Fill and review
   // The site's own "Apply" button, when the job page shows the form only after it. Never a "Submit" button, and never
   // "Apply with LinkedIn / Indeed / Google" (those are other sites' sign-ins).
-  var START = /^(apply( now| for (this|the) (job|position|role))?|start (your )?application|apply here|i'?m interested|apply online)$/i;
-  var OTHER = /linkedin|indeed|google|facebook|seek|glassdoor|resume ?parse|upload resume to autofill/i;
+  var START = /^(easy apply( on linkedin)?|apply( now| for (this|the) (job|position|role))?|start (your )?application|apply here|i'?m interested|apply online)$/i;
+  var OTHER = /indeed|facebook|seek|glassdoor|resume ?parse|upload resume to autofill/i;
   function labelText(el) {
     return clean(el.innerText || el.value || el.getAttribute('aria-label') || '');
   }
   function startButton() {
+    var liBtn = document.querySelector(".jobs-apply-button--top-card button, .jobs-s-apply button, button.jobs-apply-button, button[aria-label*='Easy Apply'], a[aria-label*='Easy Apply'], a[href*='openSDUIApplyFlow']");
+    if (liBtn && visible(liBtn)) return liBtn;
+
     var list = document.querySelectorAll('a, button, [role="button"], input[type="button"]');
     for (var i = 0; i < list.length; i++) {
       var el = list[i];
@@ -262,8 +265,11 @@
     try { el.focus({ preventScroll: true }); } catch (e) { /* not focusable */ }
     return item.f.label;
   }
-  var SUBMIT = /^(submit( (my )?application)?|send( (my )?application)?|apply|finish|complete( application)?)$/i;
+  var SUBMIT = /^(submit( (my )?application)?|send( (my )?application)?|review( (my )?application)?|next|continue|apply|finish|complete( application)?)$/i;
   function submitButton() {
+    var liSubmit = document.querySelector("button[aria-label*='Submit application'], button[aria-label*='Review'], button.jobs-apply-button[data-easy-apply-next-button]");
+    if (liSubmit && visible(liSubmit)) return liSubmit;
+
     var list = document.querySelectorAll('button, input[type="submit"], [role="button"]');
     var best = null;
     for (var i = 0; i < list.length; i++) {
@@ -278,13 +284,14 @@
     var b = submitButton();
     if (!b) return false;
     b.scrollIntoView({ block: 'center', behavior: 'smooth' });
-    b.style.outline = '3px solid #0a66c2';
+    b.style.outline = '4px solid #00c853';
     b.style.outlineOffset = '3px';
+    b.style.boxShadow = '0 0 16px rgba(0,200,83,0.6)';
     return true;   // you tap it yourself
   }
 
   // The site's "thank you" after you sent it: the app marks the job Applied.
-  var THANKS = /thank(s| you) for (applying|your application)|application (has been |was )?(received|submitted|sent)|we('ve| have) received your application|successfully (submitted|applied)|your application is (complete|in)/i;
+  var THANKS = /thank(s| you) for (applying|your application)|application (has been |was )?(received|submitted|sent)|we('ve| have) received your application|successfully (submitted|applied)|your application is (complete|in)|applied to|application sent|easy apply submitted/i;
   function done() {
     var body = document.body ? (document.body.innerText || '') : '';
     var open = document.querySelectorAll('form input:not([type="hidden"]), form textarea');
