@@ -27,7 +27,7 @@ from fastapi import FastAPI, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 
-from . import ai, db, drive, pages, records, security
+from . import ai, collector, db, drive, pages, records, security
 
 log = logging.getLogger("autoapply")
 
@@ -66,7 +66,9 @@ async def lifespan(_app):
     if not ADMIN_PASSWORD:
         log.warning("ADMIN_PASSWORD is not set: the admin page is disabled.")
     drive.start_loop()
+    collector_task = asyncio.create_task(collector.periodic_job_collector_task())
     yield
+    collector_task.cancel()
     await drive.close()
     await ai.close()
 
@@ -709,6 +711,7 @@ async def save_my_cv(request: Request):
             return {"ok": True, "status": "conflict", "rev": cur["rev"], "d": cur["data"], "t": cur["mtime"]}
         rev, sha = records.save_cv(t, user["id"], name, raw, cv_text, max(mtime, cur["mtime"] if cur else 0), "app")
     drive.poke()
+    asyncio.create_task(collector.process_user_cv(user["id"], cv_text))
     return {"ok": True, "status": "saved", "rev": rev, "sha256": sha}
 
 
@@ -792,6 +795,113 @@ async def google_callback(request: Request):
     except drive.DriveError as e:
         return HTMLResponse(pages.drive_result(False, e.message), status_code=400)
     return HTMLResponse(pages.drive_result(True, email))
+
+
+# ---------------------------------------------------------------- LinkedIn Guest Jobs & AI Matching
+@app.get("/v1/jobs/matched")
+async def get_matched_jobs(request: Request, min_score: int = 60, status: str = "new"):
+    """Returns curated matching LinkedIn jobs for this user scored with AI (>= min_score)."""
+    user = current_user(request)
+    c = db.conn()
+    rows = c.execute(
+        """
+        SELECT j.id, j.title, j.company, j.location, j.url, j.posted_date, m.score, m.why, m.status, m.updated_at
+        FROM user_job_matches m
+        JOIN server_jobs j ON j.id = m.job_id
+        WHERE m.user_id = ? AND m.score >= ? AND (m.status = ? OR ? = 'all')
+        ORDER BY m.score DESC, j.collected_at DESC
+        LIMIT 100
+        """,
+        (user["id"], min_score, status, status),
+    ).fetchall()
+    out = []
+    for r in rows:
+        out.append({
+            "id": f"li:{r['id']}",
+            "raw_id": r["id"],
+            "title": r["title"],
+            "company": r["company"],
+            "location": r["location"],
+            "url": r["url"],
+            "posted_date": r["posted_date"],
+            "score": r["score"],
+            "why": r["why"],
+            "status": r["status"],
+            "updated_at": r["updated_at"],
+        })
+    return {"ok": True, "jobs": out}
+
+
+@app.post("/v1/jobs/match-action")
+async def job_match_action(request: Request):
+    """User marked job as applied or skipped."""
+    user = current_user(request)
+    b = await body_json(request)
+    raw_id = str(b.get("id") or "").replace("li:", "").strip()
+    action = str(b.get("action") or "").strip().lower()
+    if action not in ("applied", "skipped", "new"):
+        raise ApiError(400, "Action must be applied, skipped or new.", "bad_action")
+    now = time.time()
+    with db.tx() as t:
+        t.execute(
+            "UPDATE user_job_matches SET status = ?, updated_at = ? WHERE user_id = ? AND job_id = ?",
+            (action, now, user["id"], raw_id),
+        )
+        cur = records.current(t, user["id"], "copilot", f"li:{raw_id}")
+        if cur and cur.get("data"):
+            data = dict(cur["data"])
+            data["state"] = action
+            if action == "applied":
+                data["stage"] = "applied"
+                data["applied_at"] = now
+            records.write(t, user["id"], [("copilot", f"li:{raw_id}", data, now)], "app")
+    drive.poke()
+    return {"ok": True, "status": action}
+
+
+@app.post("/v1/jobs/extract-keywords")
+async def extract_my_keywords(request: Request):
+    """Extracts up to 4 job search keywords from user's CV using AI and triggers a match."""
+    user = current_user(request)
+    cv_text = collector.get_user_cv_text(user["id"])
+    if not cv_text:
+        raise ApiError(400, "Please upload your CV first.", "no_cv")
+    kws = await collector.process_user_cv(user["id"], cv_text)
+    return {"ok": True, "keywords": kws}
+
+
+@app.get("/v1/jobs/keywords")
+async def get_my_keywords(request: Request):
+    """Returns active job search keywords for this user."""
+    user = current_user(request)
+    c = db.conn()
+    rows = c.execute("SELECT keyword, location FROM user_keywords WHERE user_id = ?", (user["id"],)).fetchall()
+    kws = [r["keyword"] for r in rows]
+    loc = rows[0]["location"] if rows else "Egypt"
+    return {"ok": True, "keywords": kws, "location": loc}
+
+
+@app.post("/v1/jobs/keywords")
+async def update_my_keywords(request: Request):
+    """Manually update or customize the user's search keywords (up to 4)."""
+    user = current_user(request)
+    b = await body_json(request)
+    raw_kws = b.get("keywords")
+    loc = str(b.get("location") or "Egypt").strip()
+    if not isinstance(raw_kws, list):
+        raise ApiError(400, "Keywords must be a list of strings.", "bad_keywords")
+    clean = [str(k).strip()[:60] for k in raw_kws if str(k).strip()][:4]
+    now = time.time()
+    with db.tx() as t:
+        t.execute("DELETE FROM user_keywords WHERE user_id = ?", (user["id"],))
+        for kw in clean:
+            t.execute(
+                "INSERT INTO user_keywords(user_id, keyword, location, created_at) VALUES (?, ?, ?, ?)",
+                (user["id"], kw, loc, now),
+            )
+    for kw in clean:
+        asyncio.create_task(collector.fetch_linkedin_guest_jobs(kw, loc))
+    return {"ok": True, "keywords": clean, "location": loc}
 
 
 # ---------------------------------------------------------------- admin
@@ -1125,3 +1235,10 @@ async def admin_test_ai(request: Request):
         pass
     return {"ok": True, "message": f"Connected in {time.monotonic() - t0:.1f}s. {data.get('model') or model} replied: "
                                    f"{reply[:40] or '(empty)'}"}
+
+
+@app.post("/admin/api/collect-jobs")
+async def admin_collect_jobs(request: Request):
+    require_admin(request, write=True)
+    count = await collector.run_collection_cycle()
+    return {"ok": True, "collected": count}

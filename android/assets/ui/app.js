@@ -1980,8 +1980,15 @@
     return '<span class="chan">Company site</span>';
   }
   function tagsHtml(j) {
-    const f = typeof j.fit === 'number' ? j.fit : (typeof j.score === 'number' ? j.score : null);
-    return chanTag(j) + (f == null ? '' : `<span class="fit ${f >= 7 ? 'high' : f >= 5 ? 'mid' : ''}">Fit ${f}/10</span>`);
+    let fitBadge = '';
+    if (typeof j.score === 'number' && j.score > 0) {
+      const cls = j.score >= 75 ? 'high' : j.score >= 60 ? 'mid' : '';
+      fitBadge = `<span class="fit ${cls}">${j.score}% Match</span>`;
+    } else if (typeof j.fit === 'number') {
+      const cls = j.fit >= 7 ? 'high' : j.fit >= 5 ? 'mid' : '';
+      fitBadge = `<span class="fit ${cls}">${j.fit * 10}% Match</span>`;
+    }
+    return chanTag(j) + fitBadge;
   }
 
   async function loadQueue(quiet) {

@@ -76,6 +76,9 @@ public final class Engine {
 
     /** Start a session. Returns an error message, or "" when started. */
     public synchronized String start(final Bot.Options opts) {
+        if ("play".equalsIgnoreCase(Account.flavor)) {
+            return "Automatic applying is not available in the Google Play build. Use Your Jobs to review and apply directly on LinkedIn.";
+        }
         if (running()) {
             return "The bot is already running.";
         }
@@ -184,6 +187,9 @@ public final class Engine {
     /** You said yes (Apply, or Apply all with ids null): the bot sends them; when it is not running, a short run starts
      *  that only sends them. Returns how many. */
     public synchronized int approve(List<String> ids) {
+        if ("play".equalsIgnoreCase(Account.flavor)) {
+            return 0;
+        }
         int n = store.changeStatus(ids == null ? store.idsWithStatus("ready") : ids, "ready", "approved");
         if (n > 0) {
             log("You said yes to " + n + (n == 1 ? " application." : " applications."));

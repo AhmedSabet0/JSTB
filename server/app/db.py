@@ -134,6 +134,36 @@ CREATE TABLE IF NOT EXISTS login_codes (
   created INTEGER NOT NULL DEFAULT 0,
   expires_at REAL NOT NULL
 );
+-- Centralized LinkedIn Job Collection & AI Matching
+CREATE TABLE IF NOT EXISTS server_jobs (
+  id TEXT PRIMARY KEY,
+  title TEXT NOT NULL,
+  company TEXT NOT NULL,
+  location TEXT NOT NULL,
+  url TEXT NOT NULL,
+  posted_date TEXT NOT NULL DEFAULT '',
+  collected_at REAL NOT NULL,
+  keywords TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_server_jobs_collected ON server_jobs(collected_at);
+CREATE TABLE IF NOT EXISTS user_keywords (
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  keyword TEXT NOT NULL,
+  location TEXT NOT NULL DEFAULT 'Egypt',
+  created_at REAL NOT NULL,
+  PRIMARY KEY (user_id, keyword)
+);
+CREATE INDEX IF NOT EXISTS idx_user_keywords_user ON user_keywords(user_id);
+CREATE TABLE IF NOT EXISTS user_job_matches (
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  job_id TEXT NOT NULL REFERENCES server_jobs(id) ON DELETE CASCADE,
+  score INTEGER NOT NULL,
+  why TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'new',
+  updated_at REAL NOT NULL,
+  PRIMARY KEY (user_id, job_id)
+);
+CREATE INDEX IF NOT EXISTS idx_matches_user_score ON user_job_matches(user_id, score DESC);
 """
 
 # Settings the admin page changes. Values are stored as text.
