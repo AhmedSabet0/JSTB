@@ -266,3 +266,5 @@ textarea { resize: vertical; }
 }
 
 .logo .arr, .hero-mark .arr { fill: none; stroke: var(--action-ink, #fff); stroke-width: 3.4; stroke-linecap: round; stroke-linejoin: round; }
+
+.file-btn { display: inline-flex; align-items: center; justify-content: center; margin: 4px 0 10px; cursor: pointer; }

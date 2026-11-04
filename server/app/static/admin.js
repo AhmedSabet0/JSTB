@@ -218,11 +218,31 @@
         <div class="acts">
           <button class="btn small stop" data-stop="${u.id}" type="button" ${u.online && !u.stop_pending ? '' : 'disabled'}>${u.stop_pending ? 'Stopping…' : 'Stop'}</button>
           <button class="btn small" data-open="${u.id}" type="button">Details</button>
+          <button class="btn small danger" data-del="${u.id}" type="button" aria-label="Delete ${esc(u.email)}">Delete</button>
         </div>
       </div>`).join('');
     box.querySelectorAll('[data-pro]').forEach((el) => el.addEventListener('change', () => setPro(Number(el.dataset.id), el.checked, el)));
     box.querySelectorAll('[data-stop]').forEach((el) => el.addEventListener('click', () => stopUser(Number(el.dataset.stop), el)));
     box.querySelectorAll('[data-open]').forEach((el) => el.addEventListener('click', () => openUser(Number(el.dataset.open))));
+    box.querySelectorAll('[data-del]').forEach((el) => el.addEventListener('click', () => deleteUser(Number(el.dataset.del), el)));
+  }
+
+  // Delete from the list: a second tap within 5 seconds confirms.
+  async function deleteUser(id, btn) {
+    const u = data.users.find((x) => x.id === id) || {};
+    if (btn.dataset.sure !== '1') {
+      btn.dataset.sure = '1';
+      btn.textContent = 'Sure? Tap again';
+      setTimeout(() => { if (btn.isConnected) { btn.dataset.sure = ''; btn.textContent = 'Delete'; } }, 5000);
+      return;
+    }
+    btn.disabled = true;
+    try {
+      await api(`/admin/api/users/${id}/delete`, {});
+      toast(`Deleted ${u.email || 'the user'}.`);
+      $('users').dataset.sig = '';
+      refresh();
+    } catch (e) { btn.disabled = false; fail(e); }
   }
 
   $('q').addEventListener('input', () => { $('users').dataset.sig = ''; renderUsers(); });
@@ -550,6 +570,24 @@
     const body = { google_client_id: $('g-id').value.trim() };
     if ($('g-secret').value.trim()) body.google_client_secret = $('g-secret').value.trim();
     saveSettings(body, 'Saved. Users can connect Google Drive from the app (Settings > Google Drive).');
+  });
+  // The JSON file Google gives with the client: its ID and secret go in the form, then Save.
+  $('g-json').addEventListener('change', async () => {
+    const f = $('g-json').files[0];
+    $('g-json').value = '';
+    if (!f) return;
+    try {
+      const j = JSON.parse(await f.text());
+      const c = j.web || j.installed || {};
+      if (!c.client_id || !c.client_secret) throw new Error('This file has no client_id and client_secret.');
+      const want = $('g-redirect').textContent.trim();
+      if (want && Array.isArray(c.redirect_uris) && !c.redirect_uris.includes(want)) {
+        toast(`Warning: this client's redirect URI is not ${want}. Add it in Google Cloud.`, true);
+      }
+      $('g-id').value = c.client_id;
+      $('g-secret').value = c.client_secret;
+      $('f-google').requestSubmit();
+    } catch (e) { toast(e.message || 'Could not read that file.', true); }
   });
   $('btn-clear-google').addEventListener('click', () => {
     // eslint-disable-next-line no-alert

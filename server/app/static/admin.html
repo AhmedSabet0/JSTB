@@ -162,10 +162,12 @@
 
         <form class="card" id="f-google" autocomplete="off">
           <h2>Google Drive</h2>
-          <p class="hint">Lets each user keep their CV, answers and jobs in an <b>JSTB</b> folder in their own Google Drive,
-            both ways. Make a Google Cloud OAuth client (README &rarr; Google Drive) and paste it here.</p>
+          <p class="hint">Lets each user keep their CV, answers and jobs in a <b>JSTB</b> folder in their own Google Drive,
+            both ways. It also lets everyone sign in with Google. Make a Google Cloud OAuth client (README &rarr; Google Drive), then load its JSON file or paste it here.</p>
           <label>Authorized redirect URI (paste it in the Google client)</label>
           <div class="link-row"><code id="g-redirect"></code><button class="btn" data-copy="g-redirect" type="button">Copy</button></div>
+          <label class="btn ghost file-btn" for="g-json">Load the JSON file from Google</label>
+          <input id="g-json" type="file" accept=".json,application/json" hidden>
           <label for="g-id">Client ID</label>
           <input id="g-id" type="text" spellcheck="false" placeholder="1234567890-abc.apps.googleusercontent.com">
           <label for="g-secret">Client secret</label>
