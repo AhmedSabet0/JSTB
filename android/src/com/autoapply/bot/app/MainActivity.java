@@ -68,6 +68,8 @@ public final class MainActivity extends Activity {
     private WebView dash;
     private LinearLayout signInPane;
     private WebView signInWeb;
+    private LinearLayout googlePane;
+    private WebView googleWeb;
     private LinearLayout livePane;
     private ValueCallback<Uri[]> fileCallback;
     private boolean dark;
@@ -397,7 +399,7 @@ public final class MainActivity extends Activity {
             }
             return;
         }
-        if (signInPane != null || livePane != null) {
+        if (signInPane != null || googlePane != null || livePane != null) {
             closePanes();
             return;
         }
@@ -493,6 +495,14 @@ public final class MainActivity extends Activity {
                 signInWeb = null;
             }
         }
+        if (googlePane != null) {
+            root.removeView(googlePane);
+            googlePane = null;
+            if (googleWeb != null) {
+                googleWeb.destroy();
+                googleWeb = null;
+            }
+        }
         if (livePane != null) {
             WebViewPage p = platform.page;
             if (p != null) {
@@ -554,6 +564,92 @@ public final class MainActivity extends Activity {
             }
         }).start();
         dash.evaluateJavascript("window.aaRefresh && window.aaRefresh()", null);
+    }
+
+    /** In-app Google Sign-In: opens in an in-app sheet without switching away to external Chrome. */
+    void showGoogleSignIn(final String url) {
+        closePanes();
+        googlePane = pane("Sign in with Google", "Cancel", new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                closePanes();
+                js("window.aaGoogle && window.aaGoogle(JSON.stringify({ok:false, error:'Sign-in cancelled'}))");
+            }
+        }, "Sign in with your Google account. Your CV and data will sync automatically.");
+
+        googleWeb = new WebView(this);
+        WebViewPage.configure(googleWeb);
+        WebSettings s = googleWeb.getSettings();
+        s.setLoadWithOverviewMode(true);
+        s.setBuiltInZoomControls(true);
+        s.setDisplayZoomControls(false);
+        // Clean desktop Chrome User-Agent to avoid disallowed_useragent
+        s.setUserAgentString("Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Mobile Safari/537.36");
+
+        googleWeb.setWebViewClient(new WebViewClient() {
+            @Override
+            public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
+                Uri u = request.getUrl();
+                if ("autoapply".equals(u.getScheme())) {
+                    final String code = u.getQueryParameter("code");
+                    closePanes();
+                    if (code != null && !code.isEmpty()) {
+                        bridgePool.execute(new Runnable() {
+                            @Override
+                            public void run() {
+                                String r = platform.api.handle("/api/account/google-finish", Json.stringify(Json.obj("code", code)));
+                                js("window.aaGoogle && window.aaGoogle(" + Json.stringify(r) + ")");
+                            }
+                        });
+                    }
+                    return true;
+                }
+                return false;
+            }
+
+            @Override
+            public void onPageFinished(WebView view, String pageUrl) {
+                Uri u = Uri.parse(pageUrl);
+                if ("autoapply".equals(u.getScheme())) {
+                    final String code = u.getQueryParameter("code");
+                    closePanes();
+                    if (code != null && !code.isEmpty()) {
+                        bridgePool.execute(new Runnable() {
+                            @Override
+                            public void run() {
+                                String r = platform.api.handle("/api/account/google-finish", Json.stringify(Json.obj("code", code)));
+                                js("window.aaGoogle && window.aaGoogle(" + Json.stringify(r) + ")");
+                            }
+                        });
+                    }
+                }
+            }
+
+            @Override
+            public void onReceivedError(WebView view, WebResourceRequest request, WebResourceError error) {
+                if (request.getUrl() != null && request.getUrl().toString().contains("disallowed_useragent")) {
+                    closePanes();
+                    openCustomTab(url);
+                }
+            }
+        });
+
+        googlePane.addView(googleWeb, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
+        root.addView(googlePane, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        googleWeb.loadUrl(url);
+    }
+
+    void openCustomTab(String url) {
+        try {
+            Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
+            intent.putExtra("android.support.customtabs.extra.SESSION", (android.os.IBinder) null);
+            intent.putExtra("android.support.customtabs.extra.TOOLBAR_COLOR", dark ? 0xff0d1420 : 0xffffffff);
+            intent.putExtra("android.support.customtabs.extra.TITLE_VISIBILITY", 1);
+            intent.putExtra("android.support.customtabs.extra.ENABLE_URLBAR_HIDING", true);
+            startActivity(intent);
+        } catch (Throwable t) {
+            startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url)));
+        }
     }
 
     /** Watch the bot's own LinkedIn page while it works (scaled down; the page keeps its desktop size). */
@@ -852,6 +948,7 @@ public final class MainActivity extends Activity {
                 browserWeb.evaluateJavascript("window.AAFill && window.AAFill.advance()", new ValueCallback<String>() {
                     @Override
                     public void onReceiveValue(String r) {
+                        int delay = (r != null && r.contains("uploading")) ? 2000 : 700;
                         platform.main.postDelayed(new Runnable() {
                             @Override
                             public void run() {
@@ -859,7 +956,7 @@ public final class MainActivity extends Activity {
                                     fillForm();
                                 }
                             }
-                        }, 700);
+                        }, delay);
                     }
                 });
             }
@@ -1113,6 +1210,7 @@ public final class MainActivity extends Activity {
                                                     web.evaluateJavascript("window.AAFill && window.AAFill.advance()", new ValueCallback<String>() {
                                                         @Override
                                                         public void onReceiveValue(String s) {
+                                                            int delay = (s != null && s.contains("uploading")) ? 2000 : 600;
                                                             platform.main.postDelayed(new Runnable() {
                                                                 @Override
                                                                 public void run() {
@@ -1120,7 +1218,7 @@ public final class MainActivity extends Activity {
                                                                         fillForm();
                                                                     }
                                                                 }
-                                                            }, 600);
+                                                            }, delay);
                                                         }
                                                     });
                                                 }
@@ -1226,6 +1324,7 @@ public final class MainActivity extends Activity {
                                                                                         web.evaluateJavascript("window.AAFill && window.AAFill.advance()", new ValueCallback<String>() {
                                                                                             @Override
                                                                                             public void onReceiveValue(String s) {
+                                                                                                int delay = (s != null && s.contains("uploading")) ? 2000 : 700;
                                                                                                 platform.main.postDelayed(new Runnable() {
                                                                                                     @Override
                                                                                                     public void run() {
@@ -1233,7 +1332,7 @@ public final class MainActivity extends Activity {
                                                                                                             fillForm();
                                                                                                         }
                                                                                                     }
-                                                                                                }, 700);
+                                                                                                }, delay);
                                                                                             }
                                                                                         });
                                                                                     }
