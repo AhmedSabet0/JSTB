@@ -8,14 +8,12 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
-    <!-- github:start  (build.sh leaves these out of the Google Play build: it has no auto apply and no self-update) -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
-    <!-- github:end -->
 
     <!-- Job links open in the LinkedIn app when it is installed. -->
     <queries>
@@ -46,14 +44,13 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
-            <!-- Share a job from LinkedIn or a browser to Auto Apply: it joins your list of jobs. -->
+            <!-- Share a job to Auto Apply: it joins your list of jobs. -->
             <intent-filter android:label="@string/share_label">
                 <action android:name="android.intent.action.SEND" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:mimeType="text/plain" />
             </intent-filter>
-            <!-- Back from Google's page: after connecting Google Drive (autoapply://drive) and after Sign in with Google
-                 (autoapply://auth?code=..., a one-time code that works only with this app's own PKCE verifier). -->
+            <!-- Back from Google's page: after connecting Google Drive and after Sign in with Google -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
@@ -65,7 +62,6 @@
 
         <receiver android:name=".app.ActionReceiver" android:exported="false" />
 
-        <!-- github:start -->
         <service
             android:name=".app.BotService"
             android:exported="false"
@@ -79,7 +75,6 @@
                 <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
             </intent-filter>
         </receiver>
-        <!-- github:end -->
 
         <provider
             android:name=".app.FilesProvider"
