@@ -179,7 +179,7 @@ DEFAULTS = {
     "announcement": "",          # shown on every app's home screen
     "min_version_github": "0",   # versionCode below this must update first
     "min_version_play": "0",
-    "play_url": "https://play.google.com/store/apps/details?id=com.autoapply.bot",
+    "play_url": "https://play.google.com/store/apps/details?id=com.jstb",
     "google_client_id": "",      # Sign in with Google and Drive sync: the OAuth client made in Google Cloud (README)
     "google_client_secret": "",
     "password_signups": "0",     # new accounts with an email and a password (once Google sign-in is set up)
