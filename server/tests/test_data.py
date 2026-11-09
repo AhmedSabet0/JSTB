@@ -518,6 +518,31 @@ def main_test():
         r = c.get("/v1/me/cv", headers=PN)
         check("and her CV", r.status_code == 200 and base64.b64decode(r.json()["data"]) == pdf and "Network Engineer" in r.json()["text"],
               r.text[:200])
+
+        print("\n== Sign in with Google in the app (no browser)")
+        main.google_limit.hits.clear()
+        check("the app learns the client ID to ask the phone's Google account for", c.get("/v1/config").json().get("google_client_id")
+              == fake.client_id)
+        fake.email, fake.name = "omar.native@gmail.com", "Omar"
+        r = c.post("/v1/auth/google/native", json={"code": fake.native_code(), "device": "Galaxy S24"})
+        check("a one-time code from the phone: signed in, a new account", r.status_code == 200 and r.json().get("token")
+              and r.json()["created"] and r.json()["user"]["email"] == "omar.native@gmail.com", r.text)
+        PO = auth(r.json()["token"])
+        d = c.get("/v1/me/drive", headers=PO).json()["drive"]
+        check("and its Google Drive is connected by the same consent", d["connected"] and d["email"] == "omar.native@gmail.com", d)
+        r = c.post("/v1/auth/google/native", json={"code": fake.native_code()})
+        check("again: the same account", r.status_code == 200 and not r.json()["created"], r.text)
+        check("a code is used once", c.post("/v1/auth/google/native", json={"code": "4/native-used-or-made-up"}).status_code == 400)
+        r = c.post("/v1/auth/google/native", json={"id_token": fake.id_token("omar.native@gmail.com", "Omar")})
+        check("an ID token for this server, confirmed by Google: signed in", r.status_code == 200 and r.json().get("token")
+              and r.json()["user"]["email"] == "omar.native@gmail.com", r.text)
+        r = c.post("/v1/auth/google/native", json={"id_token": fake.id_token("omar.native@gmail.com", "Omar", aud="another-app")})
+        check("an ID token meant for another app: refused", r.status_code == 400 and err(r) == "google", r.text)
+        bad = fake.id_token("omar.native@gmail.com", "Omar").rsplit(".", 1)[0] + ".forged"
+        check("a forged ID token: refused", c.post("/v1/auth/google/native", json={"id_token": bad}).status_code == 400)
+        r = c.post("/v1/auth/google/native", json={"id_token": fake.id_token("omar.native@gmail.com", "Omar", verified=False)})
+        check("an unverified email: refused", r.status_code == 400 and err(r) == "unverified", r.text)
+        check("nothing given: refused", err(c.post("/v1/auth/google/native", json={})) == "bad_request")
         check("one Auto Apply folder in her Drive, not two", len(mine("folder", "nada@gmail.com")) == 1)
         url, page, code = google_login("sara@example.com", V, "Sara")
         r = c.post("/v1/auth/google/finish", json={"code": code, "verifier": V})

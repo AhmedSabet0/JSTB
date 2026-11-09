@@ -34,6 +34,7 @@ log = logging.getLogger("autoapply.drive")
 
 AUTH_URL = os.environ.get("GOOGLE_AUTH_URL", "https://accounts.google.com/o/oauth2/v2/auth")
 TOKEN_URL = os.environ.get("GOOGLE_TOKEN_URL", "https://oauth2.googleapis.com/token")
+TOKENINFO_URL = os.environ.get("GOOGLE_TOKENINFO_URL", "https://oauth2.googleapis.com/tokeninfo")
 REVOKE_URL = os.environ.get("GOOGLE_REVOKE_URL", "https://oauth2.googleapis.com/revoke")
 DRIVE_URL = os.environ.get("GOOGLE_DRIVE_URL", "https://www.googleapis.com/drive/v3")
 UPLOAD_URL = os.environ.get("GOOGLE_UPLOAD_URL", "https://www.googleapis.com/upload/drive/v3")
@@ -1020,6 +1021,41 @@ async def exchange(code, verifier):
         raise DriveError(e.code, "Google did not accept the sign-in. Try again from the app." if e.code != "setup" else
                          MESSAGES["setup"])
     return r.json()
+
+
+async def exchange_native(code):
+    """Google's tokens for a one-time code the Android app got from the Google account on the phone (Sign in with
+    Google without a browser). Such codes are made for this server's client and have no redirect URI."""
+    s = db.settings()
+    if not configured(s):
+        raise DriveError("off", "Google sign-in is not set up on the server yet.")
+    r = await _form(TOKEN_URL, {"grant_type": "authorization_code", "code": code, "client_id": s["google_client_id"],
+                                "client_secret": s["google_client_secret"], "redirect_uri": ""})
+    if r.status_code != 200:
+        e = _error_of(r)
+        raise DriveError(e.code, "Google did not accept the sign-in. Try again." if e.code != "setup" else MESSAGES["setup"])
+    return r.json()
+
+
+async def native_id_claims(id_token):
+    """Who signed in, from an ID token the app got from the phone's Google account. It did not come from Google's token
+    endpoint over our own TLS, so Google checks its signature (tokeninfo); then the same checks as id_claims."""
+    s = db.settings()
+    if not configured(s):
+        raise DriveError("off", "Google sign-in is not set up on the server yet.")
+    try:
+        r = await client().get(TOKENINFO_URL, params={"id_token": id_token}, headers={"Accept": "application/json"})
+    except httpx.HTTPError as e:
+        raise DriveError("net", f"Could not reach Google ({type(e).__name__}).")
+    if r.status_code != 200:
+        raise DriveError("google", "Google did not confirm that sign-in. Try again.")
+    claims = r.json() if isinstance(r.json(), dict) else {}
+    if claims.get("iss") not in ("https://accounts.google.com", "accounts.google.com") or \
+            claims.get("aud") != s.get("google_client_id") or float(claims.get("exp") or 0) < time.time() - 60:
+        raise DriveError("google", "That Google sign-in is not for JSTB, or it ran out. Try again.")
+    if not claims.get("sub") or not claims.get("email") or claims.get("email_verified") not in (True, "true"):
+        raise DriveError("unverified", "That Google account has no verified email address.")
+    return claims
 
 
 def _b64url_json(part):

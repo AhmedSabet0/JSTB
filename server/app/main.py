@@ -237,7 +237,9 @@ async def health():
 async def public_config():
     s = db.settings()
     return {"ok": True, "app_name": APP_NAME, "contact_email": CONTACT, "signups_open": s.get("signups_open") == "1",
-            "google_signin": drive.configured(s), "password_signups": password_signups(s)}
+            "google_signin": drive.configured(s), "password_signups": password_signups(s),
+            # the app asks the phone's Google account for a sign-in meant for this client (no browser)
+            "google_client_id": s.get("google_client_id", "") if drive.configured(s) else ""}
 
 
 # ---------------------------------------------------------------- accounts
@@ -379,21 +381,9 @@ async def google_signed_in(row, code):
             t.execute("INSERT INTO login_codes(code_hash, user_id, purpose, expires_at) VALUES (?, ?, 'delete', ?)",
                       (security.token_hash(token), user["id"], time.time() + 600))
         return pages.delete_confirm(email, token)
-    created = False
     now = time.time()
     with db.tx() as t:
-        if user is None:
-            if s.get("signups_open") != "1":
-                raise drive.DriveError("closed", "New accounts are closed right now.")
-            pro = 1 if s.get("new_users_pro") == "1" else 0
-            cur = t.execute("INSERT INTO users(email, name, pw_hash, created_at, pro, pro_changed_at, google_sub) "
-                            "VALUES (?, ?, '', ?, ?, ?, ?)", (email, text(claims.get("name"), 80), now, pro, now if pro else None, sub))
-            uid, created = cur.lastrowid, True
-        elif user["google_sub"] and user["google_sub"] != sub:
-            raise drive.DriveError("other", f"{email} is linked to another Google account. Sign in with that one.")
-        else:
-            uid = user["id"]
-            t.execute("UPDATE users SET google_sub = ? WHERE id = ?", (sub, uid))
+        uid, created = google_account(t, user, claims, email, sub, s, now)
         code_out = security.new_token()
         t.execute("INSERT INTO login_codes(code_hash, user_id, purpose, app_challenge, device, created, expires_at) "
                   "VALUES (?, ?, 'app', ?, ?, ?, ?)", (security.token_hash(code_out), uid, row["app_challenge"], row["device"],
@@ -404,6 +394,56 @@ async def google_signed_in(row, code):
         except drive.DriveError as e:
             log.info("user %s: signed in, Drive not linked: %s", uid, e.message)
     return pages.signed_in(email, code_out)
+
+
+def google_account(t, user, claims, email, sub, s, now):
+    """The JSTB account of a Google sign-in: the one with that Google ID or email, or a new one. (uid, created)"""
+    if user is None:
+        if s.get("signups_open") != "1":
+            raise drive.DriveError("closed", "New accounts are closed right now.")
+        pro = 1 if s.get("new_users_pro") == "1" else 0
+        cur = t.execute("INSERT INTO users(email, name, pw_hash, created_at, pro, pro_changed_at, google_sub) "
+                        "VALUES (?, ?, '', ?, ?, ?, ?)", (email, text(claims.get("name"), 80), now, pro, now if pro else None, sub))
+        return cur.lastrowid, True
+    if user["google_sub"] and user["google_sub"] != sub:
+        raise drive.DriveError("other", f"{email} is linked to another Google account. Sign in with that one.")
+    t.execute("UPDATE users SET google_sub = ? WHERE id = ?", (sub, user["id"]))
+    return user["id"], False
+
+
+@app.post("/v1/auth/google/native")
+async def google_native(request: Request):
+    """Sign in with Google from the app itself, like other apps (no browser): the Google account on the phone gave the
+    app a one-time code for this server (`code`: Google Drive is linked with the same consent) or an ID token for it
+    (`id_token`). Google confirms either; the answer is a session, like /v1/auth/google/finish."""
+    b = await body_json(request)
+    if not google_limit.allow(client_ip(request)):
+        raise ApiError(429, "Too many attempts. Wait a few minutes and try again.", "rate_limited")
+    code, id_token = text(b.get("code"), 2000), text(b.get("id_token"), 6000)
+    data = {}
+    try:
+        if code:
+            data = await drive.exchange_native(code)
+            claims = drive.id_claims(data.get("id_token"))
+        elif id_token:
+            claims = await drive.native_id_claims(id_token)
+        else:
+            raise ApiError(400, "Tap Continue with Google again.", "bad_request")
+        email, sub = security.clean_email(claims["email"]), str(claims["sub"])
+        if not email:
+            raise drive.DriveError("unverified", "That Google account has no usable email address.")
+        user = db.one("SELECT * FROM users WHERE google_sub = ?", (sub,)) or db.one("SELECT * FROM users WHERE email = ?", (email,))
+        with db.tx() as t:
+            uid, created = google_account(t, user, claims, email, sub, db.settings(), time.time())
+    except drive.DriveError as e:
+        raise ApiError(403 if e.code in ("closed", "other", "off") else 400, e.message, e.code)
+    if drive.SCOPE in str(data.get("scope") or "").split():
+        try:
+            await drive.link_tokens(uid, data, email)        # the same Google account keeps your JSTB folder
+        except drive.DriveError as e:
+            log.info("user %s: signed in, Drive not linked: %s", uid, e.message)
+    row = {"user_id": uid, "device": text(b.get("device"), 80), "created": 1 if created else 0}
+    return await google_session(row, b, request)
 
 
 @app.post("/v1/auth/google/finish")

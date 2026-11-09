@@ -17,6 +17,7 @@ import httpx
 URLS = {"GOOGLE_AUTH_URL": "https://accounts.google.test/o/oauth2/v2/auth",
         "GOOGLE_TOKEN_URL": "https://oauth2.google.test/token",
         "GOOGLE_REVOKE_URL": "https://oauth2.google.test/revoke",
+        "GOOGLE_TOKENINFO_URL": "https://oauth2.google.test/tokeninfo",
         "GOOGLE_DRIVE_URL": "https://drive.google.test/drive/v3",
         "GOOGLE_UPLOAD_URL": "https://drive.google.test/upload/drive/v3",
         "GOOGLE_SHEETS_URL": "https://sheets.google.test/v4/spreadsheets"}
@@ -52,6 +53,13 @@ class FakeGoogle:
                             "scope": self.grant_scope if self.grant_scope is not None else one["scope"],
                             "offline": one.get("access_type") == "offline", "name": self.name}
         return {"code": code, "state": one["state"]}
+
+    def native_code(self, scope="openid email profile " + SCOPE):
+        """The Android app asks the Google account on the phone for a one-time code for the server (no browser)."""
+        code = "4/native-" + secrets.token_hex(8)
+        self.codes[code] = {"challenge": None, "redirect_uri": "", "email": self.email, "scope": scope, "offline": True,
+                            "name": self.name}
+        return code
 
     @staticmethod
     def sub_of(email):
@@ -142,8 +150,13 @@ class FakeGoogle:
             if f[3] > 0 and f[0] == request.method and f[1] in full:
                 f[3] -= 1
                 return f[2]
+        if host == "oauth2.google.test" and path == "/tokeninfo":     # Google checks an ID token's signature
+            tok = (parse_qs(request.url.query.decode()).get("id_token") or [""])[0].split(".")
+            if len(tok) != 3 or tok[2] != "fake-signature":
+                return httpx.Response(400, json={"error": "invalid_token", "error_description": "Invalid Value"})
+            return httpx.Response(200, json=json.loads(base64.urlsafe_b64decode(tok[1] + "=" * (-len(tok[1]) % 4))))
         if host == "oauth2.google.test":
-            form = {k: v[0] for k, v in parse_qs(request.content.decode()).items()}
+            form = {k: v[0] for k, v in parse_qs(request.content.decode(), keep_blank_values=True).items()}
             return self._token(form) if path == "/token" else self._revoke(form)
         who = self._who(request)
         if who is None:
@@ -165,7 +178,7 @@ class FakeGoogle:
             if c is None or c["redirect_uri"] != form.get("redirect_uri"):
                 return httpx.Response(400, json={"error": "invalid_grant", "error_description": "Bad Request"})
             want = base64.urlsafe_b64encode(hashlib.sha256(form.get("code_verifier", "").encode()).digest()).decode().rstrip("=")
-            if want != c["challenge"]:
+            if c["challenge"] is not None and want != c["challenge"]:
                 return httpx.Response(400, json={"error": "invalid_grant", "error_description": "Invalid code verifier."})
             out = {"access_token": self._access(c["email"], c["scope"]), "expires_in": 3599, "scope": c["scope"],
                    "token_type": "Bearer"}
