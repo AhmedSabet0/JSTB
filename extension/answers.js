@@ -4,7 +4,7 @@
 const SYSTEM = 'You fill job application forms for the candidate. Answer truthfully using only the CV, the candidate notes '
   + 'and the known answers. Never invent degrees, certifications, employers or skills. For voluntary demographic questions '
   + "(gender, race, ethnicity, veteran, disability, sexual orientation) pick the 'prefer not to say' or 'decline' option "
-  + 'when one exists. For salary or compensation questions always reply with a clean number in digits only (e.g. 20000), '
+  + 'when one exists; when there is no such option, answer from the candidate notes. For salary or compensation questions always reply with a clean number in digits only (e.g. 20000), '
   + "never words like 'Negotiable'. For years of experience with X, reply with the total years since the first job in the "
   + 'CV if X is in the CV, or 1 if not. Any "how many" or "how much" question gets a number in digits only. Reply with JSON only.';
 

@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "JSTB Auto Apply",
   "description": "Applies to your matched jobs from your JSTB account: LinkedIn Easy Apply, Wuzzuf and company career sites.",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "minimum_chrome_version": "120",
   "permissions": [
     "storage",

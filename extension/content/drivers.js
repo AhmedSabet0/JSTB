@@ -24,7 +24,8 @@
     } catch (e) { return ''; }
   }
   const done = (status, reason, extra) => send(Object.assign({ t: 'result', status, reason: reason || '', qa,
-    html: status === 'stuck' && !(extra && extra.html === false) ? snapshot() : '', pageUrl: location.href }, extra || {}));
+    html: status === 'stuck' ? (lastSnap || snapshot()) : '', pageUrl: location.href }, extra || {}));
+  let lastSnap = '';       // the form as it was just before it was closed
   const pageText = () => String(document.body ? document.body.innerText : '');
   const CAPTCHA = 'iframe[src*="recaptcha"], iframe[src*="hcaptcha"], iframe[src*="turnstile"], .g-recaptcha, .h-captcha, #captcha';
   const hasCaptcha = () => [...document.querySelectorAll(CAPTCHA)].some((c) => vis(c) && c.getBoundingClientRect().height > 40);
@@ -93,6 +94,7 @@
   async function liDiscard() {
     const m = liModal();
     if (!m) return;
+    lastSnap = snapshot();
     const x = m.querySelector("button[aria-label='Dismiss'], button[aria-label='Close'], .artdeco-modal__dismiss");
     if (x) x.click();
     const b = await F.waitFor(() => [...document.querySelectorAll("button[data-control-name='discard_application_confirm_btn'], button")]
