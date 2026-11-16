@@ -196,7 +196,10 @@ async function startRun() {
     if (e.code === 'signed_out') await update((s) => { s.token = ''; s.user = null; });
     return { ok: false, message: e.message };
   }
+  const left = (await load()).active;        // a job left over from before (the extension was reloaded, or stopped mid-way)
+  if (left) { try { await chrome.tabs.remove(left.tabId); } catch (e) { /* already closed */ } }
   await update((s) => {
+    s.active = null;
     s.running = true; s.nextAt = 0; s.message = 'Starting'; s.queue = []; s.cache = {};
     for (const [id, v] of Object.entries(s.done)) if (v === 'stuck' || v === 'error') delete s.done[id];     // one more try
     addLog(s, 'Started (' + caps(s).perHour + ' per hour, up to ' + caps(s).perDay + ' a day)');
@@ -236,7 +239,11 @@ async function tick() {
     let st = await load();
     if (!st.running) { chrome.alarms.clear('tick'); return; }
     if (st.active) {
-      if (now() - st.active.startedAt > JOB_TIMEOUT) await finish(st.active.tabId, { status: 'stuck', reason: 'Took too long' });
+      let open = true;
+      try { await chrome.tabs.get(st.active.tabId); } catch (e) { open = false; }
+      if (!open) await finish(st.active.tabId, { status: 'error', reason: 'The tab was closed' });
+      else if (now() - st.active.startedAt > JOB_TIMEOUT) await finish(st.active.tabId, { status: 'stuck', reason: 'Took too long' });
+      else if (now() - (st.active.seenAt || st.active.startedAt) > 150) await finish(st.active.tabId, { status: 'stuck', reason: 'The page stopped responding' });
       return;
     }
     if (now() < st.nextAt) return;
@@ -262,12 +269,15 @@ async function tick() {
     }
     const job = st.queue[0];
     const tab = await chrome.tabs.create({ url: job.url, active: false });
-    await update((s) => {
+    const stopped = await update((s) => {
+      if (!s.running) return true;           // Stop was pressed while this job was opening
       s.queue = s.queue.slice(1);
       s.active = { job, tabId: tab.id, startedAt: now(), steps: 0, kind: siteOf(s, job.url), submitting: false, external: 0 };
       s.message = 'Applying: ' + job.title + (job.company ? ' at ' + job.company : '');
       addLog(s, s.message);
+      return false;
     });
+    if (stopped) { try { await chrome.tabs.remove(tab.id); } catch (e) { /* already closed */ } }
   } finally {
     ticking = false;
   }
@@ -399,6 +409,7 @@ async function onMessage(msg, sender) {
     const st = await load();
     const a = st.active;
     if (!a || a.tabId !== tabId) return null;
+    update((s) => { if (s.active && s.active.tabId === tabId) s.active.seenAt = now(); });
     if (msg.t === 'hello') {
       return { job: a.job, kind: a.kind, steps: a.steps, noSubmit: st.settings.noSubmit,
         sites: { linkedin: st.settings.linkedin, wuzzuf: st.settings.wuzzuf, company: st.settings.company } };
@@ -491,6 +502,12 @@ async function onMessage(msg, sender) {
 chrome.runtime.onMessage.addListener((msg, sender, respond) => {
   onMessage(msg, sender).then((r) => respond(r === undefined ? null : r), (e) => respond({ ok: false, message: String(e && e.message) }));
   return true;
+});
+
+chrome.runtime.onInstalled.addListener(async () => {       // the extension was reloaded or updated: nothing is in flight any more
+  const st = await load();
+  await update((s) => { s.active = null; });
+  if (st.running) { chrome.alarms.create('tick', { delayInMinutes: 0.5, periodInMinutes: 0.5 }); tick(); }
 });
 
 chrome.runtime.onStartup.addListener(async () => {
