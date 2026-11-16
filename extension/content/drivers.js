@@ -308,6 +308,7 @@
     if (root.querySelector('input[type="password"]')) return done('needs_you', 'This site needs an account: sign in there first');
 
     for (let round = 0; round < 6; round++) {
+      if (round > 0 && THANKS_RE.test(pageText())) return done('applied');      // the last click did send it
       if (await F.uploadCv(area, false)) { log('CV attached'); await sleep(4000); }     // the site reads the CV and fills what it can
       qa.push(...await F.fill(area, ctx, round > 0));
       await sleep(800);
@@ -321,8 +322,10 @@
       const before = clean((area() || document.body).textContent).slice(0, 600);
       await send({ t: btn === submit ? 'submitting' : 'step' });
       F.click(btn);
+      const clicked = Date.now();
       const moved = await F.waitFor(() => {
         if (THANKS_RE.test(pageText())) return 'thanks';
+        if (Date.now() - clicked < 2500) return null;       // give the page a moment before reading errors
         if (signIn() && !formRoot()) return 'signin';
         const fr = area();
         if (!fr) return 'gone';
