@@ -75,6 +75,7 @@ $('save').addEventListener('click', async () => {
   refresh();
 });
 $('signout').addEventListener('click', async (e) => { e.preventDefault(); await send({ t: 'signout' }); note = ''; refresh(); });
+$('answers').addEventListener('click', (e) => { e.preventDefault(); chrome.runtime.openOptionsPage(); });
 $('clear').addEventListener('click', async (e) => { e.preventDefault(); await send({ t: 'clear_log' }); refresh(); });
 
 refresh();

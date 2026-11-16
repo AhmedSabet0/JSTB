@@ -66,10 +66,12 @@
     const m = liModal();
     if (!m) return [];
     const out = [];
-    for (const e of m.querySelectorAll('.artdeco-inline-feedback--error, [data-test-form-element-error-messages], [role="alert"]')) {
+    for (const e of m.querySelectorAll('.artdeco-inline-feedback--error, [data-test-form-element-error-messages], [role="alert"], '
+      + '[class*="error" i], [id$="-error"], [data-test*="error" i]')) {
       const t = clean(e.textContent);
-      if (vis(e) && t && !out.includes(t)) out.push(t);
+      if (vis(e) && t && t.length < 160 && !e.querySelector('input, select, textarea') && !out.includes(t)) out.push(t);
     }
+    for (const f of F.scan(m)) if (f.error && !out.includes(f.error)) out.push(f.error);
     return out;
   }
 
@@ -128,7 +130,12 @@
         || [...document.querySelectorAll('main button, main a')].find((b) => vis(b) && /^apply( now)?$/i.test(clean(b.textContent)));
       if (!other) return done('skipped', 'No Apply button on this job');
       if (!hello.sites.company) return done('skipped', 'Applies on the company site (turned off)');
-      const href = other.tagName === 'A' ? other.href : '';
+      let href = other.tagName === 'A' ? other.href : '';
+      try {        // LinkedIn wraps the company's link: take the real address out of it
+        const u = new URL(href);
+        const inner = /linkedin\.com$/.test(u.hostname) ? (u.searchParams.get('url') || u.searchParams.get('redirect') || '') : '';
+        if (/^https?:/.test(inner)) href = inner;
+      } catch (e) { /* not a link */ }
       if (href && /^https?:/.test(href) && !/linkedin\.com\/jobs\/view/.test(href)) return done('external', '', { url: href });
       await send({ t: 'expect_external' });
       other.click();   // opens the company's site in a new tab: the background follows it
@@ -211,7 +218,12 @@
       if (errs.length) { await liDiscard(); return done('stuck', 'Form error: ' + errs.join(' / ').slice(0, 200)); }
       if (liFingerprint() === before) {
         same += 1;
-        if (same >= 3) { await liDiscard(); return done('stuck', 'The form did not move to the next step'); }
+        if (same >= 3) {
+          const open = F.scan(liModal()).filter((f) => (f.value !== undefined ? !f.value : (f.options ? !f.options.some((o) => o.checked) && !f.selected : !f.selected)))
+            .map((f) => f.question).slice(0, 3).join(' | ');
+          await liDiscard();
+          return done('stuck', 'The form did not move to the next step' + (open ? '. Not answered: ' + open.slice(0, 220) : ''));
+        }
       } else same = 0;
     }
     await liDiscard();
@@ -249,14 +261,16 @@
     if (steps > 8) return done('stuck', 'Too many pages in this application');
     const ctx = { title: job.title, company: job.company, description: clean(pageText()).slice(0, 3000) };
 
-    let root = await F.waitFor(formRoot, 4);
+    const findStart = () => F.buttons(document, START_RE, NOT_RE)[0]
+      || [...document.querySelectorAll('a')].find((a) => vis(a) && START_RE.test(clean(a.innerText)) && !NOT_RE.test(clean(a.innerText)));
+    await F.waitFor(() => formRoot() || findStart(), 15);      // pages that build themselves take a while
+    let root = formRoot();
     if (!root) {   // the job page: find its Apply button
       if (kind === 'wuzzuf' && /you (have )?(already )?applied|applied on/i.test(pageText())) return done('skipped', 'Already applied');
-      const start = F.buttons(document, START_RE, NOT_RE)[0]
-        || [...document.querySelectorAll('a')].find((a) => vis(a) && START_RE.test(clean(a.innerText)) && !NOT_RE.test(clean(a.innerText)));
+      const start = findStart();
       if (!start) {
         if (document.querySelector('input[type="password"]')) return done('needs_you', 'This site needs an account: sign in there first');
-        return done('stuck', 'No application form found on this page');
+        return done('stuck', 'No application form found on ' + location.hostname);
       }
       await send({ t: 'step' });
       const before = location.href;

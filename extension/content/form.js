@@ -7,7 +7,7 @@
     + '.jobs-easy-apply-form-section__grouping, .form-group, .field, [class*="form-field"], [class*="FormField"], '
     + '[class*="question"], [role="group"], [role="radiogroup"]';
   const ERR_SEL = '.artdeco-inline-feedback--error, [data-test-form-element-error-messages], [role="alert"], '
-    + '.error, .invalid-feedback, [class*="error-message"], [class*="errorMessage"], [class*="field-error"]';
+    + '.error, .invalid-feedback, [class*="error-message"], [class*="errorMessage"], [class*="field-error"], [class*="error" i], [id$="-error"], [data-test*="error" i]';
   const SKIP_TYPES = ['hidden', 'file', 'submit', 'button', 'search', 'image', 'reset', 'password'];
   const SKIP_NAME = /follow-company|top-choice|top choice|captcha|honeypot|search/i;
   let counter = 0;
@@ -84,7 +84,8 @@
       }
     }
     const g = groupOf(el);
-    const e = g ? [...g.querySelectorAll(ERR_SEL)].find((x) => vis(x) && clean(x.textContent)) : null;
+    const e = g ? [...g.querySelectorAll(ERR_SEL)].find((x) => vis(x) && clean(x.textContent) && clean(x.textContent).length < 160
+      && !x.querySelector('input, select, textarea')) : null;
     if (e) return clean(e.textContent).slice(0, 200);
     return el.getAttribute('aria-invalid') === 'true' ? 'Invalid input' : '';
   }

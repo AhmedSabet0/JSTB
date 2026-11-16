@@ -2,11 +2,33 @@
   "manifest_version": 3,
   "name": "JSTB Auto Apply",
   "description": "Applies to your matched jobs from your JSTB account: LinkedIn Easy Apply, Wuzzuf and company career sites.",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "minimum_chrome_version": "120",
-  "permissions": ["storage", "unlimitedStorage", "alarms", "tabs", "scripting"],
-  "host_permissions": ["<all_urls>"],
-  "background": { "service_worker": "background.js", "type": "module" },
-  "action": { "default_popup": "popup.html", "default_title": "JSTB Auto Apply" },
-  "icons": { "16": "icons/icon16.png", "48": "icons/icon48.png", "128": "icons/icon128.png" }
+  "permissions": [
+    "storage",
+    "unlimitedStorage",
+    "alarms",
+    "tabs",
+    "scripting"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "JSTB Auto Apply"
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "options_ui": {
+    "page": "setup.html",
+    "open_in_tab": true
+  }
 }

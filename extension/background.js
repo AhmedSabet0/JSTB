@@ -1,6 +1,6 @@
 /* JSTB extension: signs in to your JSTB account, takes your matched jobs from the server and applies to them one
    by one, at your pace, in a background tab. */
-import { answerFields } from './answers.js';
+import { answerFields, guessStartYear } from './answers.js';
 
 const DEFAULT_SERVER = 'https://145-241-153-177.sslip.io';
 const VERSION = chrome.runtime.getManifest().version;
@@ -115,6 +115,7 @@ async function claim() {
     addLog(s, 'Signed in as ' + ((r.user && r.user.email) || 'your account'));
   });
   chrome.alarms.clear('claim');
+  if (!(await chrome.storage.local.get('setup')).setup) chrome.runtime.openOptionsPage();      // your answers, once
   try { await chrome.tabs.remove(tabId); } catch (e) { /* already closed */ }
   return true;
 }
@@ -155,6 +156,14 @@ async function userData(st, fresh) {
   }
   await update((s) => { s.data = data; s.dataAt = now(); });
   return data;
+}
+
+/** Your data with what you typed in "My answers" here on top of what the app saved. */
+async function withSetup(data) {
+  const setup = (await chrome.storage.local.get('setup')).setup || {};
+  const profile = Object.assign({}, data.profile);
+  for (const [k, v] of Object.entries(setup)) if (v !== '' && v !== null && v !== undefined) profile[k] = String(v);
+  return Object.assign({}, data, { profile });
 }
 
 // ------------------------------------------------------------------ the run
@@ -265,7 +274,17 @@ async function tick() {
 
 async function inject(tabId) {
   try {
-    await chrome.scripting.executeScript({ target: { tabId }, files: ['content/form.js', 'content/drivers.js'] });
+    for (let i = 0; ; i++) {        // a page that redirects right away refuses the first try
+      try {
+        await chrome.scripting.executeScript({ target: { tabId }, files: ['content/form.js', 'content/drivers.js'] });
+        return;
+      } catch (e) {
+        if (i >= 4) throw e;
+        await new Promise((r) => setTimeout(r, 2500));
+        const tab = await chrome.tabs.get(tabId);
+        if (tab.status !== 'complete') return;      // still loading: the next "complete" starts it
+      }
+    }
   } catch (e) {
     const st = await load();
     if (st.active && st.active.tabId === tabId) await finish(tabId, { status: 'error', reason: 'Could not work on this page' });
@@ -382,9 +401,14 @@ async function onMessage(msg, sender) {
     }
     if (msg.t === 'answers') {
       try {
-        const data = await userData(st);
+        const data = await withSetup(await userData(st));
         const out = await answerFields(msg.fields || [], msg.ctx || {}, data, st.user, st.cache,
           (messages, maxTokens) => api(st, '/v1/ai/chat', { messages, purpose: 'apply', max_tokens: maxTokens, temperature: 0.2 }));
+        if (out.stats && out.stats.questions) {
+          const x = out.stats;
+          await update((s) => { addLog(s, '  ' + x.questions + ' questions: ' + x.own + ' from your answers, ' + x.aiGot + '/' + x.ai
+            + ' from the AI' + (x.note ? ' (' + x.note + ')' : '')); });
+        }
         if (Object.keys(out.learned).length) {
           await update((s) => {
             Object.assign(s.cache, out.learned);
@@ -443,6 +467,14 @@ async function onMessage(msg, sender) {
       return { ok: true };
     });
   }
+  if (msg.t === 'get_setup') {
+    const st = await load();
+    let data = { profile: {}, cvText: '' };
+    try { if (st.token) data = await userData(st); } catch (e) { /* show what is saved here */ }
+    const merged = await withSetup(data);
+    return { profile: merged.profile, guessYear: guessStartYear(data.cvText), signedIn: !!st.token };
+  }
+  if (msg.t === 'save_setup') { await chrome.storage.local.set({ setup: msg.setup || {} }); await update((s) => { s.cache = {}; }); return { ok: true }; }
   if (msg.t === 'clear_log') return update((s) => { s.log = []; return { ok: true }; });
   return null;
 }

@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>JSTB Auto Apply: my answers</title>
+<link rel="stylesheet" href="popup.css">
+<style>
+  body { width: auto; max-width: 560px; margin: 0 auto; padding-bottom: 40px; font-size: 14px; }
+  h2 { font-size: 14px; margin: 22px 0 6px; }
+  label { margin: 9px 0; }
+  input[type="text"], input[type="number"], select { width: 210px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; font: inherit; }
+  .hint { color: var(--muted); font-size: 12px; margin: -4px 0 8px; }
+  #saved { color: var(--ok); margin-left: 10px; }
+  button.primary { width: auto; padding: 9px 26px; margin-top: 18px; }
+</style>
+</head>
+<body>
+<header>
+  <img src="icons/icon48.png" alt="">
+  <div><h1>My answers</h1><p class="muted">The questions every application asks. Filled once, used on every form.</p></div>
+</header>
+<section>
+  <h2>Experience</h2>
+  <label>Year of your first job <input id="work_start_year" type="number" min="1970" max="2100"></label>
+  <p class="hint">"How many years of experience with X?" gets the years since then when X is in your CV.</p>
+  <label>Years for anything not in your CV <input id="default_years" type="number" min="0" max="50"></label>
+
+  <h2>Salary (numbers only)</h2>
+  <label>Expected monthly salary <input id="expected_salary" type="number" min="0"></label>
+  <label>Current monthly salary <input id="current_salary" type="number" min="0"></label>
+  <label>Currency <input id="currency" type="text" placeholder="EGP"></label>
+
+  <h2>Contact</h2>
+  <label>Phone <input id="phone" type="text" placeholder="01012345678"></label>
+  <label>City <input id="city" type="text" placeholder="Cairo"></label>
+
+  <h2>Availability</h2>
+  <label>Notice period in days (0 = immediately) <input id="notice_days" type="number" min="0" max="365"></label>
+  <label>Willing to relocate <select id="relocate"><option value=""></option><option>Yes</option><option>No</option></select></label>
+  <label>OK with on-site work <select id="onsite"><option value=""></option><option>Yes</option><option>No</option></select></label>
+  <label>Authorized to work where you apply <select id="authorized"><option value=""></option><option>Yes</option><option>No</option></select></label>
+  <label>Need visa sponsorship <select id="sponsorship"><option value=""></option><option>Yes</option><option>No</option></select></label>
+
+  <h2>Other</h2>
+  <label>Graduation year <input id="graduation_year" type="number" min="1970" max="2100"></label>
+  <label>English level <select id="english"><option value=""></option><option>Basic</option><option>Conversational</option><option>Professional</option><option>Fluent</option><option>Native or bilingual</option></select></label>
+  <label>Driving license <select id="driving"><option value=""></option><option>Yes</option><option>No</option></select></label>
+  <label>Military service <select id="military"><option value=""></option><option>Completed</option><option>Exempted</option><option>Postponed</option><option>Not applicable</option></select></label>
+
+  <button id="save" class="primary">Save</button><span id="saved"></span>
+</section>
+<script src="setup.js"></script>
+</body>
+</html>

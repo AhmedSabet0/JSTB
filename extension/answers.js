@@ -6,7 +6,7 @@ const SYSTEM = 'You fill job application forms for the candidate. Answer truthfu
   + "(gender, race, ethnicity, veteran, disability, sexual orientation) pick the 'prefer not to say' or 'decline' option "
   + 'when one exists. For salary or compensation questions always reply with a clean number in digits only (e.g. 20000), '
   + "never words like 'Negotiable'. For years of experience with X, reply with the total years since the first job in the "
-  + 'CV if X is in the CV, or 0 if not. Reply with JSON only.';
+  + 'CV if X is in the CV, or 1 if not. Any "how many" or "how much" question gets a number in digits only. Reply with JSON only.';
 
 const norm = (s) => String(s || '').toLowerCase().replace(/[’]/g, "'").replace(/\s+/g, ' ').replace(/[\s*:?]+$/, '').trim();
 const has = (q, re) => re.test(q);
@@ -157,6 +157,42 @@ function fit(f, a) {
   return v || null;
 }
 
+const STOP = new Set(('a an and are as at be by do for from has have how in is it many much of on or other such the this to using '
+  + 'what with work working you your years year experience currently total professional relevant related hands').split(' '));
+
+/** The year of the first job in the CV: the earliest year in its experience section. */
+export function guessStartYear(cvText) {
+  const t = String(cvText || '');
+  const at = t.search(/\b(work|professional|employment)?\s*(experience|history)\b|\bemployment\b/i);
+  let sec = at >= 0 ? t.slice(at) : t;
+  const end = sec.slice(25).search(/\n\s*(education|certifications?|certificates|skills|projects|courses|training|languages)\b/i);
+  if (at >= 0 && end >= 0) sec = sec.slice(0, end + 25);
+  const thisYear = new Date().getFullYear();
+  const years = (sec.match(/\b(19[89]\d|20\d\d)\b/g) || []).map(Number).filter((y) => y <= thisYear);
+  return years.length ? Math.min(...years) : 0;
+}
+
+/** "How many years of experience with X?": the years since your first job when X is in your CV, otherwise your default. */
+export function experienceYears(f, data) {
+  if (f.kind === 'choice' || f.kind === 'multi' || f.kind === 'textarea') return null;
+  const q = norm(f.question);
+  if (!/\byears?\b/.test(q) || !/experience|worked|working|\busing\b|\bused\b|how long/.test(q)) return null;
+  const p = data.profile || {};
+  const start = parseInt(p.work_start_year, 10) || guessStartYear(data.cvText);
+  if (!start) return null;
+  const total = Math.max(1, new Date().getFullYear() - start);
+  const other = String(parseInt(p.default_years, 10) >= 0 ? parseInt(p.default_years, 10) : 1);
+  const m = q.match(/(?:experience|worked|working|expertise)\s+(?:do you (?:currently |already )?have\s+)?(?:in|with|using|as an?|on|of)\s+(.+)$/)
+    || q.match(/years of (.+?) experience/) || q.match(/how long have you (?:been )?(?:worked|working|used|using)\s+(?:with|in|on|as an?)?\s*(.+)$/);
+  if (!m) return String(total);                       // "years of experience" in general
+  const cv = ' ' + String(data.cvText || '').toLowerCase() + ' ';
+  const words = m[1].replace(/[^a-z0-9+#.\s/-]/g, ' ').split(/[\s/,]+/).map((w) => w.replace(/^[.-]+|[.-]+$/g, ''))
+    .filter((w) => w.length >= 2 && !STOP.has(w));
+  if (!words.length) return String(total);
+  const inCv = words.some((w) => cv.includes(w) || (w.length >= 6 && cv.includes(w.replace(/(ing|s)$/, ''))));
+  return inCv ? String(total) : other;
+}
+
 const cacheKey = (f) => norm(f.question) + '|' + f.kind + '|' + (f.options || []).map(norm).join(',');
 
 function firstJson(text) {
@@ -176,7 +212,9 @@ export async function answerFields(fields, ctx, data, user, cache, chat) {
   for (const f of fields) {
     const key = cacheKey(f);
     const retry = !!f.error;
-    let a = null;
+    if (f.kind === 'text' && /^(how many|how much)\b|\b(salary|compensation)\b/i.test(f.question)) f.kind = 'numeric';   // digits only
+    let a = retry ? null : fit(f, experienceYears(f, data));
+    if (a !== null) { answers[f.key] = a; continue; }
     if (!retry && cache[key] !== undefined) a = fit(f, cache[key]);
     if (a === null && !retry) {
       const fact = (data.facts || []).find((x) => norm(x.label) === norm(f.question) || (x.asked || []).some((k) => norm(k) === norm(f.question)));
@@ -187,7 +225,8 @@ export async function answerFields(fields, ctx, data, user, cache, chat) {
     if (a !== null) answers[f.key] = a;
     else ask.push(f);
   }
-  if (!ask.length) return { answers, learned };
+  const stats = { questions: fields.length, own: fields.length - ask.length, ai: ask.length, aiGot: 0 };
+  if (!ask.length) return { answers, learned, stats };
 
   const known = (data.facts || []).slice(0, 80).map((x) => '- ' + x.label + ': ' + x.value).join('\n');
   const list = ask.map((f, i) => {
@@ -212,10 +251,15 @@ export async function answerFields(fields, ctx, data, user, cache, chat) {
       + 'different answer that satisfies that message. Answer every question.',
     'Return ONLY {"answers": [{"n": <number>, "answer": ...}, ...]}',
   ].filter(Boolean);
-  const r = await chat([{ role: 'system', content: SYSTEM }, { role: 'user', content: parts.join('\n\n') }], Math.min(2000, 300 + ask.length * 180));
+  const r = await chat([{ role: 'system', content: SYSTEM }, { role: 'user', content: parts.join('\n\n') }], Math.min(4000, 900 + ask.length * 250));
   const content = (r && (r.content || r.text || (r.choices && r.choices[0] && r.choices[0].message && r.choices[0].message.content))) || '';
   const parsed = firstJson(content);
-  const rows = Array.isArray(parsed) ? parsed : ((parsed && parsed.answers) || []);
+  let rows = Array.isArray(parsed) ? parsed : ((parsed && parsed.answers) || []);
+  if (!rows.length) {          // a reply that was cut off: take the answers that did arrive
+    rows = [...String(content).matchAll(/\{\s*"n"\s*:\s*(\d+)\s*,\s*"answer"\s*:\s*("(?:[^"\\]|\\.)*"|\[[^\]]*\]|[^,}\s]+)\s*\}/g)]
+      .map((x) => { try { return { n: Number(x[1]), answer: JSON.parse(x[2]) }; } catch (e) { return null; } }).filter(Boolean);
+  }
+  if (!rows.length) stats.note = content ? 'the AI reply could not be read' : 'the AI sent an empty reply';
   for (const row of rows) {
     const f = ask[Number(row && row.n) - 1];
     if (!f) continue;
@@ -223,6 +267,7 @@ export async function answerFields(fields, ctx, data, user, cache, chat) {
     if (a === null) continue;
     answers[f.key] = a;
     learned[cacheKey(f)] = a;
+    stats.aiGot += 1;
   }
-  return { answers, learned };
+  return { answers, learned, stats };
 }

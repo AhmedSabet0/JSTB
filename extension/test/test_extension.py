@@ -234,7 +234,7 @@ with sync_playwright() as p:
     done = s["done"]
     check("the Wuzzuf job is applied to", done.get("li:wz1") == "applied", done)
     sent = json.loads(POSTED.get("/wz/sent", b"{}"))
-    check("its questions are answered by the AI", sent.get("a1") == "4" and "Kubernetes" in sent.get("a2", ""), sent)
+    check("its questions are answered by the AI", sent.get("a1") == "5" and "Kubernetes" in sent.get("a2", ""), sent)
     check("the company form is applied to", done.get("li:ats1") == "applied", done)
     form = POSTED.get("/ats/sent", b"").decode("latin-1")
 
@@ -246,7 +246,7 @@ with sync_playwright() as p:
           == ("Sara", "Adel", "sara@example.com", "+201012345678"), form[:900])
     check("salary, notice period and relocation come from the setup answers",
           (part("salary"), part("notice"), part("reloc")) == ("45000", "1 month", "no"), (part("salary"), part("notice"), part("reloc")))
-    check("the rest is asked from the AI", part("k8s") == "4" and any("Kubernetes" in a for a in ASKED), ASKED)
+    check("years of experience are counted from the first job in the CV", part("k8s") == "5" and not any("Kubernetes" in a for a in ASKED), (part("k8s"), ASKED))
     check("the CV is attached and the policy box ticked", 'filename="Sara Adel CV.pdf"' in form and part("privacy") == "on", form[-600:])
     if LI:
         check("the LinkedIn Easy Apply job is applied to", done.get("li:111") == "applied", done)
