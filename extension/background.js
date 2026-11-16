@@ -305,7 +305,6 @@ async function finish(tabId, res) {
   const job = a.job;
   const channel = a.kind === 'linkedin' ? 'linkedin' : 'company';
   const c = caps(st);
-  const gap = Math.round(3600 / c.perHour);
   await update((s) => {
     s.active = null;
     const kept = { applied: 'applied', stuck: 'stuck', error: 'error', needs_you: 'needs_answer' }[status];
@@ -323,8 +322,8 @@ async function finish(tabId, res) {
     const label = { applied: 'Applied', stuck: 'Stuck', error: 'Error', needs_you: 'Needs you', skipped: 'Skipped',
       dry_run: 'Test run', daily_limit: 'LinkedIn limit', ai_down: 'No AI' }[status] || status;
     addLog(s, '  ' + label + (res.reason ? ': ' + res.reason : '') + (res.qa && res.qa.length ? ' (' + res.qa.length + ' answers)' : ''));
-    s.nextAt = sent(status) ? now() + gap : 0;          // only a sent application waits for the pace; anything else: next job now
-    s.message = status === 'applied' ? 'Applied. Next one in about ' + Math.max(1, Math.round(gap / 60)) + ' min' : 'Next job';
+    s.nextAt = 0;          // no pause between jobs: only your hourly and daily numbers hold it back          // only a sent application waits for the pace; anything else: next job now
+    s.message = status === 'applied' ? 'Applied. Next job' : 'Next job';
   });
   if (res.html) await chrome.storage.local.set({ lastStuck: { job: job.title + ' at ' + job.company, reason: res.reason || '', url: res.pageUrl || job.url, html: res.html } });
   if (!res.keepTab) { try { await chrome.tabs.remove(tabId); } catch (e) { /* already closed */ } }
@@ -338,7 +337,7 @@ async function finish(tabId, res) {
     return void await stopRun("LinkedIn's daily Easy Apply limit is reached. Start again tomorrow.");
   }
   report(true);
-  if (!sent(status)) setTimeout(tick, 300);
+  setTimeout(tick, 300);
 }
 const sent = (status) => status === 'applied' || status === 'dry_run';
 
@@ -460,7 +459,7 @@ async function onMessage(msg, sender) {
       const n = msg.settings || {};
       const num = (v, lo, hi, d) => { const x = parseInt(v, 10); return Number.isFinite(x) ? Math.min(hi, Math.max(lo, x)) : d; };
       s.settings = {
-        perHour: num(n.perHour, 1, 30, s.settings.perHour), perDay: num(n.perDay, 1, 200, s.settings.perDay),
+        perHour: num(n.perHour, 1, 200, s.settings.perHour), perDay: num(n.perDay, 1, 500, s.settings.perDay),
         minScore: num(n.minScore, 0, 100, s.settings.minScore), linkedin: !!n.linkedin, wuzzuf: !!n.wuzzuf, company: !!n.company,
         noSubmit: !!n.noSubmit,
       };
