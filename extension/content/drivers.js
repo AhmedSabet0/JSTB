@@ -15,8 +15,8 @@
   /** What the page looked like when it got stuck (without scripts and styles), so the form can be studied later. */
   function snapshot() {
     try {
-      const root = document.querySelector('.jobs-easy-apply-modal, [data-test-modal-id="easy-apply-modal"], [role="dialog"], dialog[open]')
-        || document.querySelector('form') || document.querySelector('main') || document.body;
+      const root = [...document.querySelectorAll('.jobs-easy-apply-modal, [data-test-modal-id="easy-apply-modal"], [role="dialog"], dialog[open]')].find(vis)
+        || [...document.querySelectorAll('form')].find(vis) || document.querySelector('main') || document.body;
       const copy = root.cloneNode(true);
       copy.querySelectorAll('script, style, svg, img, video, noscript, link').forEach((x) => x.remove());
       copy.querySelectorAll('input:not([type="radio"]):not([type="checkbox"]), textarea').forEach((x) => x.setAttribute('value', ''));
@@ -256,8 +256,11 @@
       .filter((x) => x.n >= 2 && !/search|login|sign-?in|subscribe|newsletter/i.test((x.f.id || '') + ' ' + (x.f.className || '') + ' ' + (x.f.getAttribute('action') || '')))
       .sort((a, b) => b.n - a.n);
     if (forms.length) return forms[0].f;
-    const main = document.querySelector('[role="dialog"], main, #main, #content') || document.body;
-    return [...main.querySelectorAll('input:not([type="hidden"]), select, textarea')].filter(vis).length >= 3 ? main : null;
+    // no <form>: a visible block with real fields in it (search and filter boxes of a job page do not count)
+    const real = (i) => vis(i) && !i.readOnly && (i.type || '') !== 'search'
+      && !/search|keyword|query|filter|location|copy|share|^q$/i.test(`${i.id} ${i.name} ${i.getAttribute('placeholder') || ''} ${i.getAttribute('title') || ''} ${i.getAttribute('aria-label') || ''}`);
+    const main = [...document.querySelectorAll('[role="dialog"], dialog[open], main, #main, #content')].find(vis) || document.body;
+    return [...main.querySelectorAll('input:not([type="hidden"]), select, textarea')].filter(real).length >= 3 ? main : null;
   }
 
   const siteErrors = () => {
@@ -265,6 +268,25 @@
     if (!r) return [];
     return F.scan(r).filter((f) => f.error).map((f) => f.question + ': ' + f.error);
   };
+
+  /** The page is not understood: show the AI what can be clicked and click what it picks. Returns true when it clicked. */
+  async function guide(goal) {
+    const els = [...document.querySelectorAll('button, a[href], [role="button"], input[type="submit"], input[type="button"]')]
+      .filter((e) => vis(e) && !e.disabled && e.getAttribute('aria-disabled') !== 'true')
+      .map((e) => ({ e, t: clean(e.innerText || e.value || e.getAttribute('aria-label') || e.getAttribute('title') || '').slice(0, 80) }))
+      .filter((x) => x.t && !/sign ?in|log ?in|register|create (an )?account|google|facebook|linkedin|apple|share|cookie|privacy|terms|back|cancel/i.test(x.t))
+      .slice(0, 70);
+    if (!els.length) return false;
+    const r = await send({ t: 'guide', goal, title: document.title, host: location.hostname, text: clean(pageText()).slice(0, 1500),
+      elements: els.map((x, i) => (i + 1) + ' | ' + x.e.tagName.toLowerCase() + ' | ' + x.t) });
+    const pick = r && r.click ? els[Number(r.click) - 1] : null;
+    if (!pick) { if (r && r.reason) log('AI: nothing to click (' + r.reason + ')'); return false; }
+    if (noSubmit && /submit|send|finish|complete/i.test(pick.t)) { await done('dry_run', 'Stopped before "' + pick.t + '" (test run)'); return 'ended'; }
+    log('AI chose "' + pick.t + '"');
+    await send({ t: 'step' });
+    F.click(pick.e);
+    return true;
+  }
 
   async function site(kind) {
     await sleep(1500);
@@ -292,7 +314,17 @@
     if (!root) {   // the job page: find its Apply button
       if (kind === 'wuzzuf' && /you (have )?(already )?applied|applied on/i.test(pageText())) return done('skipped', 'Already applied');
       const start = findStart();
-      if (!start) return done('stuck', 'No application form found on ' + location.hostname);
+      if (!start) {
+        const before = location.href;
+        const g = await guide('Open the application form for this job (the Apply button or link).');
+        if (g === 'ended') return undefined;
+        if (g) await F.waitFor(() => area() || signIn(), 12);
+        if (!area()) {
+          if (signIn()) return done('needs_you', 'This site ' + NEEDS_ACCOUNT);
+          if (g && location.href !== before) return undefined;        // a new page is loading: the driver starts again there
+          return done('stuck', 'No application form found on ' + location.hostname);
+        }
+      } else {
       if (RESUME_RE.test(clean(start.innerText || start.value || ''))) log('Using "' + clean(start.innerText || start.value || '') + '"');
       await send({ t: 'step' });
       const before = location.href;
@@ -302,8 +334,17 @@
       if (!root) {
         if (signIn()) return done('needs_you', 'This site ' + NEEDS_ACCOUNT);
         if (location.href !== before) return undefined;   // a new page is loading: the driver starts again there
-        return done('stuck', 'The Apply button did not open a form');
+        const g = await guide('The Apply button was clicked but no application form appeared. Choose what opens the application form.');
+        if (g === 'ended') return undefined;
+        if (g) await F.waitFor(() => area() || signIn(), 12);
+        if (!area()) {
+          if (signIn()) return done('needs_you', 'This site ' + NEEDS_ACCOUNT);
+          if (g && location.href !== before) return undefined;
+          return done('stuck', 'The Apply button did not open a form');
+        }
       }
+      }
+      root = area();
     }
     if (root.querySelector('input[type="password"]')) return done('needs_you', 'This site needs an account: sign in there first');
 
@@ -317,7 +358,14 @@
       const submit = F.buttons(r, SUBMIT_RE, NOT_RE)[0];
       const next = F.buttons(r, NEXT_RE, NOT_RE)[0];
       const btn = next || submit;
-      if (!btn) return done('stuck', 'No Next or Submit button found');
+      if (!btn) {
+        const g = await guide('The application form is filled. Choose the button that continues to the next step or submits the application.');
+        if (g === 'ended') return undefined;
+        if (!g) return done('stuck', 'No Next or Submit button found');
+        await sleep(3500);
+        if (THANKS_RE.test(pageText()) || !area()) return done('applied', THANKS_RE.test(pageText()) ? '' : 'Submitted (no confirmation seen)');
+        continue;
+      }
       if (btn === submit && noSubmit) return done('dry_run', 'Stopped before Submit (test run)');
       const before = clean((area() || document.body).textContent).slice(0, 600);
       await send({ t: btn === submit ? 'submitting' : 'step' });

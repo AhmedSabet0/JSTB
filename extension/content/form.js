@@ -362,17 +362,23 @@
     return ask;
   }
 
+  const CONSENT = /\b(i (hereby )?(agree|consent|confirm|acknowledge|certify|declare|accept|understand)|i have read|agree to|consent to|processing of (my )?personal data|privacy (policy|notice)|terms (and|&) conditions|data protection)\b|wyrażam zgodę|oświadczam/i;
+  const NOT_CONSENT = /follow|subscribe|newsletter|marketing|job alert|promotion|offers|sms/i;
+
   /** Put the answers ({key: value}) into the fields. Returns [{q, a}] of what was filled. */
   async function apply(fields, answers) {
     const done = [];
     for (const f of fields) {
       const key = f.id || (f.options && f.options[0] && f.options[0].id);
       if (f.kind === 'single_checkbox') {   // "I agree", "I confirm": tick what is required
-        const must = f.required || !!f.error || /\b(agree|consent|confirm|acknowledge|certify|privacy|terms)\b/i.test(f.question);
-        if (must && !f.options[0].checked && !/follow|subscribe|newsletter|marketing|job alert|promotion/i.test(f.question)) {
+        const must = f.required || !!f.error || CONSENT.test(f.question);
+        if (must && !f.options[0].checked && !NOT_CONSENT.test(f.question)) {
           check(f.options[0].id, true);
         }
         continue;
+      }
+      if (f.kind === 'checkbox') {      // several consent boxes in one block: tick each of them
+        for (const o of f.options) if (!o.checked && CONSENT.test(o.label) && !NOT_CONSENT.test(o.label)) check(o.id, true);
       }
       if (f.kind === 'resume') {
         if (!f.options.some((o) => o.checked)) check(f.options[0].id, true);

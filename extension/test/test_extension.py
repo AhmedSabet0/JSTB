@@ -31,11 +31,18 @@ fake = fake_google.FakeGoogle(CLIENT_ID, SECRET)
 fake.email, fake.name = "sara@example.com", "Sara Adel"
 drive._client = httpx.AsyncClient(transport=httpx.MockTransport(fake.handle))
 ASKED = []
+GUIDED = []
 
 
 def fake_ai(request):
     body = json.loads(request.content)
     text = body["messages"][-1]["content"]
+    if "ELEMENTS:\n" in text:          # "what do I click?"
+      rows = text.split("ELEMENTS:\n", 1)[1].splitlines()
+      n = next((int(r.split(" | ")[0]) for r in rows if "Join the crew" in r or "All done" in r), None)
+      GUIDED.append(n)
+      return httpx.Response(200, json={"id": "x", "model": "m", "usage": {"total_tokens": 20},
+                                       "choices": [{"message": {"role": "assistant", "content": json.dumps({"click": n, "reason": "it applies"})}}]})
     qs = json.loads(text.split("QUESTIONS:\n", 1)[1].split("\n\nRULES:", 1)[0])
     out = []
     for q in qs:
@@ -109,6 +116,20 @@ document.getElementById('auto').onclick = function (e) { e.preventDefault(); set
         m.innerHTML = '<h2>Thank you for applying</h2>'; }); };
   }; }, 800); };
 </script></body></html>"""
+ODD_SITE = """<!doctype html><html><head><meta charset="utf-8"><title>Network Engineer at Odd Co</title></head><body><main id="m">
+<h1>Network Engineer</h1><p>We run large networks.</p><a href="/other">See other jobs</a> <span role="button" id="go">Join the crew</span></main>
+<script>
+document.getElementById('go').onclick = function () {
+  const m = document.getElementById('m');
+  m.innerHTML = '<form id="f" onsubmit="return false"><label for="fn">First name</label><input id="fn"><label for="em">Email</label><input id="em" type="email">'
+    + '<div class="consents"><div><input type="checkbox" id="c1"><label for="c1">I declare that I have read the Data Controller Information and agree to the processing of my personal data.</label></div>'
+    + '<div><input type="checkbox" id="c2"><label for="c2">I agree to the processing of my personal data for future recruitment purposes.</label></div>'
+    + '<div><input type="checkbox" id="c3"><label for="c3">Send me the newsletter and marketing offers.</label></div></div>'
+    + '<div role="button" id="end">All done</div></form>';
+  document.getElementById('end').onclick = function () {
+    fetch('/odd/sent', {method: 'POST', body: JSON.stringify({fn: fn.value, em: em.value, c1: c1.checked, c2: c2.checked, c3: c3.checked})}).then(function () {
+      m.innerHTML = '<h1>Thank you for applying</h1>'; }); };
+};</script></body></html>"""
 POSTED = {}
 
 
@@ -126,7 +147,7 @@ class Pages(BaseHTTPRequestHandler):
 
     def do_GET(self):
         path = urlparse(self.path).path
-        self.page(FORM if path == "/ats/apply" else RESUME_SITE if path == "/wd/apply" else WUZZUF if path.startswith("/wz/jobs") else "<h1>Nothing here</h1>")
+        self.page(FORM if path == "/ats/apply" else RESUME_SITE if path == "/wd/apply" else ODD_SITE if path == "/odd/job" else WUZZUF if path.startswith("/wz/jobs") else "<h1>Nothing here</h1>")
 
     def do_POST(self):
         raw = self.rfile.read(int(self.headers.get("Content-Length", 0)))
@@ -174,7 +195,8 @@ def seed(email):
     uid = c.execute("SELECT id FROM users WHERE email = ?", (email,)).fetchone()["id"]
     jobs = [("wz1", "Cloud Engineer", "Delta Tech", PAGES + "/wz/jobs/p/abc-cloud-engineer", 90),
             ("ats1", "Platform Engineer", "Nile Systems", PAGES + "/ats/apply", 80),
-            ("wd1", "System Administrator", "Rail Co", PAGES + "/wd/apply", 70)]
+            ("wd1", "System Administrator", "Rail Co", PAGES + "/wd/apply", 70),
+            ("odd1", "Network Engineer", "Odd Co", PAGES + "/odd/job", 65)]
     if LI:
         jobs += [("111", "DevOps Engineer", "Acme", LI + "/jobs/view/111/", 95)]
     with db.tx() as t:
@@ -269,6 +291,9 @@ with sync_playwright() as p:
           and wd.get("file") == "Sara Adel CV.pdf", (done, wd, list(POSTED)))
     check("what the site did not fill is answered after it", wd.get("y") == "1", wd)
     check("questions without a label tag are still read", (wd.get("c"), wd.get("rl")) == ("Cairo", "n"), wd)
+    odd = json.loads(POSTED.get("/odd/sent", b"{}"))
+    check("a page it does not understand: the AI says what to click, twice", done.get("li:odd1") == "applied" and len(GUIDED) == 2 and all(GUIDED), (done, GUIDED, odd))
+    check("consent boxes are ticked, the newsletter is not", (odd.get("c1"), odd.get("c2"), odd.get("c3")) == (True, True, False) and odd.get("fn") == "Sara", odd)
     check("LinkedIn's new radio questions are read and ticked", wd.get("r3") == "r3y" and any(a.startswith("Have you set up and managed") for a in ASKED), (wd, ASKED))
 
     def part(name):

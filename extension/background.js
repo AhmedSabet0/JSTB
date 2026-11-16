@@ -1,6 +1,6 @@
 /* JSTB extension: signs in to your JSTB account, takes your matched jobs from the server and applies to them one
    by one, at your pace, in a background tab. */
-import { answerFields, guessStartYear } from './answers.js';
+import { answerFields, guessStartYear, replyText, firstJson } from './answers.js';
 
 const DEFAULT_SERVER = 'https://145-241-153-177.sslip.io';
 const VERSION = chrome.runtime.getManifest().version;
@@ -443,6 +443,23 @@ async function onMessage(msg, sender) {
           await stopRun(why);
         }
         return { answers: {} };
+      }
+    }
+    if (msg.t === 'guide') {          // the page is not understood: the AI picks what to click
+      if ((a.guided || 0) >= 4) return { click: null, reason: 'Asked the AI enough times on this job' };
+      await update((s) => { if (s.active) s.active.guided = (s.active.guided || 0) + 1; });
+      const system = 'You help a candidate apply to a job on a web page. From the numbered list of clickable elements choose the ONE to click '
+        + 'to reach the goal. Never choose: sign in, log in, register, create account, social login, share, save, job alerts, other jobs, '
+        + 'cookies, privacy or legal links, navigation menus, back or cancel. If no element clearly serves the goal reply with null. '
+        + 'Reply with JSON only: {"click": <number or null>, "reason": "<a few words>"}';
+      const user = 'GOAL: ' + String(msg.goal).slice(0, 200) + '\nJOB: ' + a.job.title + ' at ' + a.job.company + '\nPAGE: ' + String(msg.title).slice(0, 150)
+        + ' (' + String(msg.host).slice(0, 80) + ')\nPAGE TEXT:\n' + String(msg.text).slice(0, 1500) + '\n\nELEMENTS:\n' + (msg.elements || []).slice(0, 70).join('\n').slice(0, 6000);
+      try {
+        const r = await api(st, '/v1/ai/chat', { messages: [{ role: 'system', content: system }, { role: 'user', content: user }], purpose: 'apply', max_tokens: 400, temperature: 0 });
+        const j = firstJson(replyText(r)) || {};
+        return { click: Number(j.click) || null, reason: String(j.reason || '').slice(0, 150) };
+      } catch (e) {
+        return { click: null, reason: e.message };
       }
     }
     if (msg.t === 'cv') return (await chrome.storage.local.get('cv')).cv || null;

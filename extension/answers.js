@@ -200,7 +200,11 @@ export function experienceYears(f, data) {
 
 const cacheKey = (f) => norm(f.question) + '|' + f.kind + '|' + (f.options || []).map(norm).join(',');
 
-function firstJson(text) {
+export function replyText(r) {
+  return (r && (r.content || r.text || (r.choices && r.choices[0] && r.choices[0].message && r.choices[0].message.content))) || '';
+}
+
+export function firstJson(text) {
   const s = String(text || '');
   for (const [open, close] of [['{', '}'], ['[', ']']]) {
     const i = s.indexOf(open), j = s.lastIndexOf(close);
