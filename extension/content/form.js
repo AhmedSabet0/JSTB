@@ -74,9 +74,9 @@
   function firstLine(text, skip) {
     for (const raw of String(text || '').split(/\n+/)) {
       const line = clean(raw);
-      if (!wordy(line) || /^\d+\s*\/\s*\d+$/.test(line)) continue;
+      if (!wordy(line) || /^\d+\s*\/\s*\d+$/.test(line) || ERR_TEXT.test(raw.trim())) continue;
       if (skip && skip.some((s) => norm(s) === norm(line))) continue;
-      if (/^(this field is required|required|invalid input|please (enter|select|make|check)\b.*)$/i.test(line)) continue;
+      if (ERR_TEXT.test(line)) continue;
       return line.slice(0, 400);
     }
     return '';
@@ -107,9 +107,37 @@
     return '';
   }
 
+  const CHOICES = 'input[type="radio"], input[type="checkbox"]';
+
+  /** The words of one option: its label, or the text of its own row (LinkedIn's new forms put "Yes" in a <p> next to the input). */
   function optionLabel(i) {
     const l = labelFor(i) || i.closest('label');
-    return txt(l) || clean(i.getAttribute('aria-label')) || firstLine(i.parentElement ? i.parentElement.innerText : '') || clean(i.value);
+    if (wordy(txt(l)) || /^\d+$/.test(txt(l))) return txt(l);
+    let row = i;
+    while (row.parentElement && row.parentElement !== document.body && row.parentElement.querySelectorAll(CHOICES).length === 1) row = row.parentElement;
+    const t = row !== i ? firstLine(row.innerText) || clean(row.innerText) : '';
+    if (t) return t.slice(0, 200);
+    return clean(i.getAttribute('aria-label')) || clean(i.value);
+  }
+
+  /** The aria-label that all the options of one question share is the question itself. */
+  function sharedAria(inputs) {
+    const a = clean(inputs[0].getAttribute('aria-label'));
+    return inputs.length > 1 && wordy(a) && inputs.every((i) => clean(i.getAttribute('aria-label')) === a) ? a : '';
+  }
+
+  const ERR_TEXT = /^(this field is required|required|invalid input|please (enter|select|make|check|provide|choose|fill)\b.*|enter an? (valid|whole|decimal|number)\b.*|.{0,60}\bis required\.?|must be\b.*|only .{1,40} allowed.*)$/i;
+
+  /** The biggest box around a field that holds no other field. */
+  function boxOf(node) {
+    let box = node;
+    for (let i = 0; i < 7; i++) {
+      const up = box.parentElement;
+      if (!up || up === document.body) break;
+      if ([...up.querySelectorAll(FIELDS)].some((x) => x !== node && !node.contains(x) && vis(x))) break;
+      box = up;
+    }
+    return box;
   }
 
   function fieldError(el) {
@@ -124,6 +152,14 @@
     const e = g ? [...g.querySelectorAll(ERR_SEL)].find((x) => vis(x) && clean(x.textContent) && clean(x.textContent).length < 160
       && !x.querySelector('input, select, textarea')) : null;
     if (e) return clean(e.textContent).slice(0, 200);
+    const box = boxOf(el);            // a plain line of text under the field: "This field is required"
+    if (box !== el) {
+      for (const p of box.querySelectorAll('p, span, div, small')) {
+        if (p.children.length || el.contains(p) || !vis(p)) continue;
+        const t = String(p.textContent || '').replace(/\s+/g, ' ').trim();     // not clean(): it drops a trailing "required"
+        if (t && t.length < 160 && ERR_TEXT.test(t)) return t;
+      }
+    }
     return el.getAttribute('aria-invalid') === 'true' ? 'Invalid input' : '';
   }
 
@@ -165,8 +201,8 @@
         if (options.every((o) => /\.(pdf|docx?)\b/i.test(o.label))) kind = 'resume';
         const required = inputs.some((i) => i.required || i.getAttribute('aria-required') === 'true')
           || /\*|required/i.test(group.textContent || '');
-        let question = '';
-        if (group.tagName === 'FIELDSET' || group.getAttribute('role')) question = questionFor(group);
+        let question = sharedAria(inputs);
+        if (!question && (group.tagName === 'FIELDSET' || group.getAttribute('role'))) question = questionFor(group);
         const labels = options.map((o) => o.label);
         if (!wordy(question) || labels.some((l) => norm(l) === norm(question))) {
           question = firstLine(group.innerText, labels) || nearText(group, labels);

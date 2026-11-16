@@ -98,10 +98,14 @@ document.getElementById('auto').onclick = function (e) { e.preventDefault(); set
       + '<label for="y">How many years of experience do you have with Linux?</label><input id="y">'
       + '<div class="x1"><div class="x2">Current city <span>*</span></div><div><input id="c"></div><div class="x9">0/20</div></div>'
       + '<div class="x1"><div class="x2">Are you willing to relocate?</div><div><div><input type="radio" name="rl" value="y"><span>Yes</span></div>'
-      + '<div><input type="radio" name="rl" value="n"><span>No</span></div></div></div><button id="c2">Submit</button>';
+      + '<div><input type="radio" name="rl" value="n"><span>No</span></div></div></div>'
+      + '<div componentkey="k1"><p class="k4">Have you set up and managed production systems on AWS (for example EC2 or EKS)?*</p>'
+      + '<fieldset aria-describedby="error-message-r3" role="radiogroup"><div><div><div><div><input id="r3y" aria-label="Have you set up and managed production systems on AWS (for example EC2 or EKS)?" type="radio" name="radio-group-r3"><label for="r3y" style="display:inline-block;width:20px;height:20px"></label></div><div><p>Yes</p></div></div></div>'
+      + '<div><div><div><input id="r3n" aria-label="Have you set up and managed production systems on AWS (for example EC2 or EKS)?" type="radio" name="radio-group-r3"><label for="r3n" style="display:inline-block;width:20px;height:20px"></label></div><div><p>No</p></div></div></div></div></fieldset>'
+      + '<p class="k4">This field is required</p></div><button id="c2">Submit</button>';
     document.getElementById('c2').onclick = function () {
       fetch('/wd/sent', {method: 'POST', body: JSON.stringify({file: f.name, y: document.getElementById('y').value, c: document.getElementById('c').value,
-        rl: (document.querySelector('input[name=rl]:checked') || {}).value})}).then(function () {
+        rl: (document.querySelector('input[name=rl]:checked') || {}).value, r3: (document.querySelector('input[name=radio-group-r3]:checked') || {}).id})}).then(function () {
         m.innerHTML = '<h2>Thank you for applying</h2>'; }); };
   }; }, 800); };
 </script></body></html>"""
@@ -265,6 +269,7 @@ with sync_playwright() as p:
           and wd.get("file") == "Sara Adel CV.pdf", (done, wd, list(POSTED)))
     check("what the site did not fill is answered after it", wd.get("y") == "1", wd)
     check("questions without a label tag are still read", (wd.get("c"), wd.get("rl")) == ("Cairo", "n"), wd)
+    check("LinkedIn's new radio questions are read and ticked", wd.get("r3") == "r3y" and any(a.startswith("Have you set up and managed") for a in ASKED), (wd, ASKED))
 
     def part(name):
         m = re.search(r'name="%s"\r\n\r\n(.*?)\r\n--' % name, form, re.S)
