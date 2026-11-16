@@ -1,0 +1,28 @@
+:root { --ink: #14213d; --muted: #667085; --line: #e4e7ec; --brand: #2563eb; --bg: #f7f8fa; --ok: #067647; --bad: #b42318; }
+* { box-sizing: border-box; }
+body { width: 360px; margin: 0; font: 13px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color: var(--ink); background: #fff; }
+header { display: flex; gap: 10px; align-items: center; padding: 12px 14px; border-bottom: 1px solid var(--line); }
+header img { width: 36px; height: 36px; border-radius: 9px; }
+h1 { font-size: 15px; margin: 0; }
+p { margin: 0 0 10px; }
+.muted { color: var(--muted); margin: 0; font-size: 12px; }
+section { padding: 14px; }
+button { font: inherit; border: 1px solid var(--line); background: #fff; border-radius: 8px; padding: 7px 12px; cursor: pointer; }
+button.primary { width: 100%; background: var(--brand); border-color: var(--brand); color: #fff; font-weight: 600; padding: 9px 12px; }
+button.primary.stop { background: #fff; color: var(--bad); border-color: var(--bad); }
+button:disabled { opacity: .6; cursor: default; }
+.status { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 10px; }
+.status div { background: var(--bg); border-radius: 8px; padding: 8px; text-align: center; }
+.status b { display: block; font-size: 18px; }
+.status span { color: var(--muted); font-size: 11px; }
+.message { min-height: 18px; color: var(--muted); }
+details { margin-top: 12px; border-top: 1px solid var(--line); padding-top: 10px; }
+summary { cursor: pointer; font-weight: 600; margin-bottom: 8px; }
+label { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin: 6px 0; }
+label.check { justify-content: flex-start; }
+input[type="number"] { width: 72px; padding: 5px 6px; border: 1px solid var(--line); border-radius: 6px; font: inherit; }
+.log { max-height: 190px; overflow: auto; background: var(--bg); border-radius: 8px; padding: 8px; font-size: 12px; white-space: pre-wrap; }
+.log div { margin-bottom: 2px; }
+.log time { color: var(--muted); margin-right: 6px; }
+.foot { display: flex; justify-content: space-between; margin-top: 10px; font-size: 12px; }
+a { color: var(--brand); text-decoration: none; }

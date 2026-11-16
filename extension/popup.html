@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>JSTB Auto Apply</title>
+<link rel="stylesheet" href="popup.css">
+</head>
+<body>
+<header>
+  <img src="icons/icon48.png" alt="">
+  <div><h1>JSTB Auto Apply</h1><p id="who" class="muted">Not signed in</p></div>
+</header>
+
+<section id="signedOut" hidden>
+  <p>Sign in with the same Google account you use in the JSTB app. Your CV, answers and matched jobs come from it.</p>
+  <button id="signin" class="primary">Continue with Google</button>
+  <p id="signinNote" class="muted"></p>
+</section>
+
+<section id="signedIn" hidden>
+  <div class="status">
+    <div><b id="today">0</b><span>today</span></div>
+    <div><b id="hour">0</b><span>this hour</span></div>
+    <div><b id="queue">0</b><span>waiting</span></div>
+  </div>
+  <p id="message" class="message"></p>
+  <button id="toggle" class="primary">Start</button>
+
+  <details id="settingsBox">
+    <summary>Settings</summary>
+    <label>Applications per hour <input id="perHour" type="number" min="1" max="30"></label>
+    <label>Applications per day <input id="perDay" type="number" min="1" max="200"></label>
+    <label>Lowest match score <input id="minScore" type="number" min="0" max="100"></label>
+    <label class="check"><input id="linkedin" type="checkbox"> LinkedIn Easy Apply</label>
+    <label class="check"><input id="wuzzuf" type="checkbox"> Wuzzuf</label>
+    <label class="check"><input id="company" type="checkbox"> Company career sites</label>
+    <label class="check"><input id="noSubmit" type="checkbox"> Test run: fill the forms but do not submit</label>
+    <button id="save">Save</button>
+  </details>
+
+  <details open>
+    <summary>Activity</summary>
+    <div id="log" class="log"></div>
+  </details>
+  <div class="foot"><a id="clear" href="#">Clear activity</a><a id="signout" href="#">Sign out</a></div>
+</section>
+<script src="popup.js"></script>
+</body>
+</html>
