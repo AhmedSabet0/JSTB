@@ -83,6 +83,24 @@ WUZZUF = """<!doctype html><html><head><meta charset="utf-8"><title>Cloud Engine
     fetch('/wz/sent', {method: 'POST', body: JSON.stringify({a1: a1.value, a2: a2.value})}).then(function () {
       document.body.innerHTML = '<h1>Your application was sent. Applied successfully.</h1>'; }); };
 };</script></body></html>"""
+RESUME_SITE = """<!doctype html><html><head><meta charset="utf-8"><title>System Administrator</title></head><body><main id="m">
+<h2>Start Your Application</h2><a role="button" href="#" id="auto">Autofill with Resume</a><a role="button" href="#" id="man">Apply Manually</a>
+<a role="button" href="#">Use My Last Application</a></main>
+<script>
+const m = document.getElementById('m');
+document.getElementById('man').onclick = function () { fetch('/wd/manual', {method: 'POST', body: '1'}); };
+document.getElementById('auto').onclick = function (e) { e.preventDefault(); setTimeout(function () {
+  m.innerHTML = '<h2>Autofill with Resume</h2><div>Drop your resume here</div><input type="file" id="up" style="display:none"><button id="c1">Continue</button>';
+  document.getElementById('c1').onclick = function () {
+    const f = document.getElementById('up').files[0];
+    if (!f) { m.insertAdjacentHTML('beforeend', '<div role="alert" class="error">A resume is required</div>'); return; }
+    m.innerHTML = '<h2>My Information</h2><label for="n">Full name</label><input id="n" value="Sara Adel"><label for="e">Email</label><input id="e" type="email" value="sara@example.com">'
+      + '<label for="y">How many years of experience do you have with Linux?</label><input id="y"><button id="c2">Submit</button>';
+    document.getElementById('c2').onclick = function () {
+      fetch('/wd/sent', {method: 'POST', body: JSON.stringify({file: f.name, y: document.getElementById('y').value})}).then(function () {
+        m.innerHTML = '<h2>Thank you for applying</h2>'; }); };
+  }; }, 800); };
+</script></body></html>"""
 POSTED = {}
 
 
@@ -100,7 +118,7 @@ class Pages(BaseHTTPRequestHandler):
 
     def do_GET(self):
         path = urlparse(self.path).path
-        self.page(FORM if path == "/ats/apply" else WUZZUF if path.startswith("/wz/jobs") else "<h1>Nothing here</h1>")
+        self.page(FORM if path == "/ats/apply" else RESUME_SITE if path == "/wd/apply" else WUZZUF if path.startswith("/wz/jobs") else "<h1>Nothing here</h1>")
 
     def do_POST(self):
         raw = self.rfile.read(int(self.headers.get("Content-Length", 0)))
@@ -147,7 +165,8 @@ def seed(email):
     c = db.conn()
     uid = c.execute("SELECT id FROM users WHERE email = ?", (email,)).fetchone()["id"]
     jobs = [("wz1", "Cloud Engineer", "Delta Tech", PAGES + "/wz/jobs/p/abc-cloud-engineer", 90),
-            ("ats1", "Platform Engineer", "Nile Systems", PAGES + "/ats/apply", 80)]
+            ("ats1", "Platform Engineer", "Nile Systems", PAGES + "/ats/apply", 80),
+            ("wd1", "System Administrator", "Rail Co", PAGES + "/wd/apply", 70)]
     if LI:
         jobs += [("111", "DevOps Engineer", "Acme", LI + "/jobs/view/111/", 95)]
     with db.tx() as t:
@@ -237,6 +256,10 @@ with sync_playwright() as p:
     check("its questions are answered by the AI", sent.get("a1") == "5" and "Kubernetes" in sent.get("a2", ""), sent)
     check("the company form is applied to", done.get("li:ats1") == "applied", done)
     form = POSTED.get("/ats/sent", b"").decode("latin-1")
+    wd = json.loads(POSTED.get("/wd/sent", b"{}"))
+    check("a site with Autofill with Resume is applied to that way", done.get("li:wd1") == "applied" and "/wd/manual" not in POSTED
+          and wd.get("file") == "Sara Adel CV.pdf", (done, wd, list(POSTED)))
+    check("what the site did not fill is answered after it", wd.get("y") == "1", wd)
 
     def part(name):
         m = re.search(r'name="%s"\r\n\r\n(.*?)\r\n--' % name, form, re.S)

@@ -261,22 +261,31 @@
     if (steps > 8) return done('stuck', 'Too many pages in this application');
     const ctx = { title: job.title, company: job.company, description: clean(pageText()).slice(0, 3000) };
 
-    const findStart = () => F.buttons(document, START_RE, NOT_RE)[0]
-      || [...document.querySelectorAll('a')].find((a) => vis(a) && START_RE.test(clean(a.innerText)) && !NOT_RE.test(clean(a.innerText)));
-    await F.waitFor(() => formRoot() || findStart(), 15);      // pages that build themselves take a while
-    let root = formRoot();
+    // "Autofill with resume" comes first where a site offers it: the site reads the CV and fills most of the form itself
+    const RESUME_RE = /^(autofill|auto-fill|apply|upload|import|parse|continue|start)( with| from| using| your| my)*( resume| cv)$|^(upload|attach|import) (a |your |my )?(resume|cv)$/i;
+    const findStart = () => F.buttons(document, RESUME_RE, NOT_RE)[0] || F.buttons(document, START_RE, NOT_RE)[0]
+      || [...document.querySelectorAll('a')].find((a) => vis(a) && (RESUME_RE.test(clean(a.innerText)) || START_RE.test(clean(a.innerText)))
+        && !NOT_RE.test(clean(a.innerText)));
+    const fileInput = () => [...document.querySelectorAll('input[type="file"]')]
+      .find((i) => !/cover|letter|photo|image|avatar|picture/i.test(`${i.id} ${i.name} ${i.getAttribute('aria-label') || ''} ${i.accept || ''}`)) || null;
+    const signIn = () => [...document.querySelectorAll('input[type="password"]')].some(vis);
+    const area = () => formRoot() || (fileInput() ? (document.querySelector('[role="dialog"], main, #main, #content') || document.body) : null);
+    const NEEDS_ACCOUNT = 'needs an account: sign in on ' + location.hostname + ' once, then it can apply there';
+    await F.waitFor(() => area() || signIn() || findStart(), 15);      // pages that build themselves take a while
+    if (!area() && signIn()) return done('needs_you', 'This site ' + NEEDS_ACCOUNT);
+    let root = area();
     if (!root) {   // the job page: find its Apply button
       if (kind === 'wuzzuf' && /you (have )?(already )?applied|applied on/i.test(pageText())) return done('skipped', 'Already applied');
       const start = findStart();
-      if (!start) {
-        if (document.querySelector('input[type="password"]')) return done('needs_you', 'This site needs an account: sign in there first');
-        return done('stuck', 'No application form found on ' + location.hostname);
-      }
+      if (!start) return done('stuck', 'No application form found on ' + location.hostname);
+      if (RESUME_RE.test(clean(start.innerText || start.value || ''))) log('Using "' + clean(start.innerText || start.value || '') + '"');
       await send({ t: 'step' });
       const before = location.href;
       F.click(start);
-      root = await F.waitFor(formRoot, 12);
+      await F.waitFor(() => area() || signIn(), 15);
+      root = area();
       if (!root) {
+        if (signIn()) return done('needs_you', 'This site ' + NEEDS_ACCOUNT);
         if (location.href !== before) return undefined;   // a new page is loading: the driver starts again there
         return done('stuck', 'The Apply button did not open a form');
       }
@@ -284,27 +293,29 @@
     if (root.querySelector('input[type="password"]')) return done('needs_you', 'This site needs an account: sign in there first');
 
     for (let round = 0; round < 6; round++) {
-      await F.uploadCv(formRoot, false);
-      qa.push(...await F.fill(formRoot, ctx, round > 0));
+      if (await F.uploadCv(area, false)) { log('CV attached'); await sleep(4000); }     // the site reads the CV and fills what it can
+      qa.push(...await F.fill(area, ctx, round > 0));
       await sleep(800);
       if (hasCaptcha()) return done('needs_you', 'This form has a CAPTCHA: finish it yourself', { keepTab: true });
-      const r = formRoot() || document;
+      const r = area() || document;
       const submit = F.buttons(r, SUBMIT_RE, NOT_RE)[0];
       const next = F.buttons(r, NEXT_RE, NOT_RE)[0];
       const btn = next || submit;
       if (!btn) return done('stuck', 'No Next or Submit button found');
       if (btn === submit && noSubmit) return done('dry_run', 'Stopped before Submit (test run)');
-      const before = clean((formRoot() || document.body).textContent).slice(0, 600);
+      const before = clean((area() || document.body).textContent).slice(0, 600);
       await send({ t: btn === submit ? 'submitting' : 'step' });
       F.click(btn);
       const moved = await F.waitFor(() => {
         if (THANKS_RE.test(pageText())) return 'thanks';
-        const fr = formRoot();
+        if (signIn() && !formRoot()) return 'signin';
+        const fr = area();
         if (!fr) return 'gone';
         if (siteErrors().length) return 'errors';
         return clean(fr.textContent).slice(0, 600) !== before ? 'moved' : null;
       }, 10);
       if (moved === 'thanks') return done('applied');
+      if (moved === 'signin') return done('needs_you', 'This site ' + NEEDS_ACCOUNT);
       if (moved === 'gone') {
         await sleep(2500);
         if (THANKS_RE.test(pageText()) || btn === submit) return done('applied', THANKS_RE.test(pageText()) ? '' : 'Submitted (no confirmation seen)');

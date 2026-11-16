@@ -323,8 +323,8 @@ async function finish(tabId, res) {
     const label = { applied: 'Applied', stuck: 'Stuck', error: 'Error', needs_you: 'Needs you', skipped: 'Skipped',
       dry_run: 'Test run', daily_limit: 'LinkedIn limit', ai_down: 'No AI' }[status] || status;
     addLog(s, '  ' + label + (res.reason ? ': ' + res.reason : '') + (res.qa && res.qa.length ? ' (' + res.qa.length + ' answers)' : ''));
-    s.nextAt = now() + (status === 'applied' || status === 'dry_run' ? gap : 20);
-    s.message = status === 'applied' ? 'Applied. Next one in about ' + Math.max(1, Math.round(gap / 60)) + ' min' : 'Next job soon';
+    s.nextAt = sent(status) ? now() + gap : 0;          // only a sent application waits for the pace; anything else: next job now
+    s.message = status === 'applied' ? 'Applied. Next one in about ' + Math.max(1, Math.round(gap / 60)) + ' min' : 'Next job';
   });
   if (!res.keepTab) { try { await chrome.tabs.remove(tabId); } catch (e) { /* already closed */ } }
   try {
@@ -336,8 +336,10 @@ async function finish(tabId, res) {
     await update((s) => { delete s.done[job.id]; });
     return void await stopRun("LinkedIn's daily Easy Apply limit is reached. Start again tomorrow.");
   }
-  await report(true);
+  report(true);
+  if (!sent(status)) setTimeout(tick, 300);
 }
+const sent = (status) => status === 'applied' || status === 'dry_run';
 
 async function report(running) {
   const st = await load();
