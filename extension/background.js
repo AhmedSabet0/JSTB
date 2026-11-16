@@ -197,7 +197,7 @@ async function startRun() {
     return { ok: false, message: e.message };
   }
   await update((s) => {
-    s.running = true; s.nextAt = 0; s.message = 'Starting'; s.queue = [];
+    s.running = true; s.nextAt = 0; s.message = 'Starting'; s.queue = []; s.cache = {};
     for (const [id, v] of Object.entries(s.done)) if (v === 'stuck' || v === 'error') delete s.done[id];     // one more try
     addLog(s, 'Started (' + caps(s).perHour + ' per hour, up to ' + caps(s).perDay + ' a day)');
   });
@@ -326,6 +326,7 @@ async function finish(tabId, res) {
     s.nextAt = sent(status) ? now() + gap : 0;          // only a sent application waits for the pace; anything else: next job now
     s.message = status === 'applied' ? 'Applied. Next one in about ' + Math.max(1, Math.round(gap / 60)) + ' min' : 'Next job';
   });
+  if (res.html) await chrome.storage.local.set({ lastStuck: { job: job.title + ' at ' + job.company, reason: res.reason || '', url: res.pageUrl || job.url, html: res.html } });
   if (!res.keepTab) { try { await chrome.tabs.remove(tabId); } catch (e) { /* already closed */ } }
   try {
     if (status === 'applied') await api(st, '/v1/jobs/match-action', { id: job.id, action: 'applied' });
@@ -411,7 +412,8 @@ async function onMessage(msg, sender) {
         if (out.stats && out.stats.questions) {
           const x = out.stats;
           await update((s) => { addLog(s, '  ' + x.questions + ' questions: ' + x.own + ' from your answers, ' + x.aiGot + '/' + x.ai
-            + ' from the AI' + (x.note ? ' (' + x.note + ')' : '')); });
+            + ' from the AI' + (x.note ? ' (' + x.note + ')' : ''));
+            if (x.ai > x.aiGot && x.raw) addLog(s, '  AI said: ' + x.raw); });
         }
         if (Object.keys(out.learned).length) {
           await update((s) => {
@@ -482,6 +484,7 @@ async function onMessage(msg, sender) {
     return { profile: merged.profile, guessYear: guessStartYear(data.cvText), signedIn: !!st.token };
   }
   if (msg.t === 'save_setup') { await chrome.storage.local.set({ setup: msg.setup || {} }); await update((s) => { s.cache = {}; }); return { ok: true }; }
+  if (msg.t === 'last_stuck') return (await chrome.storage.local.get('lastStuck')).lastStuck || null;
   if (msg.t === 'clear_log') return update((s) => { s.log = []; return { ok: true }; });
   return null;
 }

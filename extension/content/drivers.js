@@ -12,7 +12,19 @@
   const noSubmit = !!hello.noSubmit;
   const qa = [];
   const log = (text) => send({ t: 'log', text });
-  const done = (status, reason, extra) => send(Object.assign({ t: 'result', status, reason: reason || '', qa }, extra || {}));
+  /** What the page looked like when it got stuck (without scripts and styles), so the form can be studied later. */
+  function snapshot() {
+    try {
+      const root = document.querySelector('.jobs-easy-apply-modal, [data-test-modal-id="easy-apply-modal"], [role="dialog"], dialog[open]')
+        || document.querySelector('form') || document.querySelector('main') || document.body;
+      const copy = root.cloneNode(true);
+      copy.querySelectorAll('script, style, svg, img, video, noscript, link').forEach((x) => x.remove());
+      copy.querySelectorAll('input:not([type="radio"]):not([type="checkbox"]), textarea').forEach((x) => x.setAttribute('value', ''));
+      return copy.outerHTML.replace(/\s+/g, ' ').slice(0, 80000);
+    } catch (e) { return ''; }
+  }
+  const done = (status, reason, extra) => send(Object.assign({ t: 'result', status, reason: reason || '', qa,
+    html: status === 'stuck' && !(extra && extra.html === false) ? snapshot() : '', pageUrl: location.href }, extra || {}));
   const pageText = () => String(document.body ? document.body.innerText : '');
   const CAPTCHA = 'iframe[src*="recaptcha"], iframe[src*="hcaptcha"], iframe[src*="turnstile"], .g-recaptcha, .h-captcha, #captcha';
   const hasCaptcha = () => [...document.querySelectorAll(CAPTCHA)].some((c) => vis(c) && c.getBoundingClientRect().height > 40);
@@ -219,10 +231,11 @@
       if (liFingerprint() === before) {
         same += 1;
         if (same >= 3) {
+          const html = snapshot();
           const open = F.scan(liModal()).filter((f) => (f.value !== undefined ? !f.value : (f.options ? !f.options.some((o) => o.checked) && !f.selected : !f.selected)))
             .map((f) => f.question).slice(0, 3).join(' | ');
           await liDiscard();
-          return done('stuck', 'The form did not move to the next step' + (open ? '. Not answered: ' + open.slice(0, 220) : ''));
+          return done('stuck', 'The form did not move to the next step' + (open ? '. Not answered: ' + open.slice(0, 220) : ''), { html });
         }
       } else same = 0;
     }
@@ -268,7 +281,9 @@
         && !NOT_RE.test(clean(a.innerText)));
     const fileInput = () => [...document.querySelectorAll('input[type="file"]')]
       .find((i) => !/cover|letter|photo|image|avatar|picture/i.test(`${i.id} ${i.name} ${i.getAttribute('aria-label') || ''} ${i.accept || ''}`)) || null;
-    const signIn = () => [...document.querySelectorAll('input[type="password"]')].some(vis);
+    const signIn = () => [...document.querySelectorAll('input[type="password"]')].some(vis)
+      || (!formRoot() && F.buttons(document, /^(sign in|log ?in|create (an )?account|sign in with email|register)$/i).length > 0
+        && /\b(sign in|log in|create (an )?account)\b/i.test(pageText().slice(0, 4000)) && /apply|login|signin|sign-in|auth/i.test(location.pathname));
     const area = () => formRoot() || (fileInput() ? (document.querySelector('[role="dialog"], main, #main, #content') || document.body) : null);
     const NEEDS_ACCOUNT = 'needs an account: sign in on ' + location.hostname + ' once, then it can apply there';
     await F.waitFor(() => area() || signIn() || findStart(), 15);      // pages that build themselves take a while

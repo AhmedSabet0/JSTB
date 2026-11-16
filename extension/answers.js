@@ -54,6 +54,7 @@ export function ruleAnswer(f, data, user) {
   if (f.input === 'tel' || auto.startsWith('tel') || has(q, /\b(phone|mobile|telephone|whatsapp)\b/)) {
     return choice ? null : (p.phone || null);
   }
+  if (has(q, /^(gender|sex)\b|what is your gender|your gender/)) return p.gender ? text(p.gender) : null;
   if (has(q, /\b(sponsor|sponsorship)\b/)) { const b = flag(p.sponsorship); return b === null ? null : yesNo(opts, b); }
   if (has(q, /(legally )?(authori[sz]ed|eligible|permitted|right) to work|work (permit|authori[sz]ation)/)) {
     if (!p.authorized) return null;
@@ -135,6 +136,7 @@ function notes(data, user) {
   add('Needs visa sponsorship', p.sponsorship);
   add('English level', p.english);
   add('Driving license', p.driving);
+  add('Gender', p.gender);
   return l.join('\n');
 }
 
@@ -153,6 +155,9 @@ function fit(f, a) {
     return v || null;
   }
   if (f.input === 'date') return /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : null;
+  if (f.input === 'email') return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v) ? v : null;        // never a sentence in an email box
+  if (f.input === 'url') return /^https?:\/\/\S+$/.test(v) ? v : (/^[\w-]+(\.[\w-]+)+\S*$/.test(v) ? 'https://' + v : null);
+  if (f.input === 'tel') return /^\+?[\d\s().-]{6,20}$/.test(v) ? v : null;
   if (f.maxlen > 0 && v.length > f.maxlen) v = v.slice(0, f.maxlen);
   return v || null;
 }
@@ -215,6 +220,7 @@ export async function answerFields(fields, ctx, data, user, cache, chat) {
     if (f.kind === 'text' && /^(how many|how much)\b|\b(salary|compensation)\b/i.test(f.question)) f.kind = 'numeric';   // digits only
     let a = retry ? null : fit(f, experienceYears(f, data));
     if (a !== null) { answers[f.key] = a; continue; }
+    if (norm(f.question).length < 2) continue;
     if (!retry && cache[key] !== undefined) a = fit(f, cache[key]);
     if (a === null && !retry) {
       const fact = (data.facts || []).find((x) => norm(x.label) === norm(f.question) || (x.asked || []).some((k) => norm(k) === norm(f.question)));
@@ -260,6 +266,7 @@ export async function answerFields(fields, ctx, data, user, cache, chat) {
       .map((x) => { try { return { n: Number(x[1]), answer: JSON.parse(x[2]) }; } catch (e) { return null; } }).filter(Boolean);
   }
   if (!rows.length) stats.note = content ? 'the AI reply could not be read' : 'the AI sent an empty reply';
+  stats.raw = String(content).replace(/\s+/g, ' ').slice(0, 220);
   for (const row of rows) {
     const f = ask[Number(row && row.n) - 1];
     if (!f) continue;

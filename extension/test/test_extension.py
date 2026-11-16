@@ -95,9 +95,13 @@ document.getElementById('auto').onclick = function (e) { e.preventDefault(); set
     const f = document.getElementById('up').files[0];
     if (!f) { m.insertAdjacentHTML('beforeend', '<div role="alert" class="error">A resume is required</div>'); return; }
     m.innerHTML = '<h2>My Information</h2><label for="n">Full name</label><input id="n" value="Sara Adel"><label for="e">Email</label><input id="e" type="email" value="sara@example.com">'
-      + '<label for="y">How many years of experience do you have with Linux?</label><input id="y"><button id="c2">Submit</button>';
+      + '<label for="y">How many years of experience do you have with Linux?</label><input id="y">'
+      + '<div class="x1"><div class="x2">Current city <span>*</span></div><div><input id="c"></div><div class="x9">0/20</div></div>'
+      + '<div class="x1"><div class="x2">Are you willing to relocate?</div><div><div><input type="radio" name="rl" value="y"><span>Yes</span></div>'
+      + '<div><input type="radio" name="rl" value="n"><span>No</span></div></div></div><button id="c2">Submit</button>';
     document.getElementById('c2').onclick = function () {
-      fetch('/wd/sent', {method: 'POST', body: JSON.stringify({file: f.name, y: document.getElementById('y').value})}).then(function () {
+      fetch('/wd/sent', {method: 'POST', body: JSON.stringify({file: f.name, y: document.getElementById('y').value, c: document.getElementById('c').value,
+        rl: (document.querySelector('input[name=rl]:checked') || {}).value})}).then(function () {
         m.innerHTML = '<h2>Thank you for applying</h2>'; }); };
   }; }, 800); };
 </script></body></html>"""
@@ -260,6 +264,7 @@ with sync_playwright() as p:
     check("a site with Autofill with Resume is applied to that way", done.get("li:wd1") == "applied" and "/wd/manual" not in POSTED
           and wd.get("file") == "Sara Adel CV.pdf", (done, wd, list(POSTED)))
     check("what the site did not fill is answered after it", wd.get("y") == "1", wd)
+    check("questions without a label tag are still read", (wd.get("c"), wd.get("rl")) == ("Cairo", "n"), wd)
 
     def part(name):
         m = re.search(r'name="%s"\r\n\r\n(.*?)\r\n--' % name, form, re.S)

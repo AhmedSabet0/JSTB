@@ -61,18 +61,55 @@
       const wrap = el.closest('label');
       if (wrap) tries.push(txt(wrap));
     }
-    for (const t of tries) if (t && t.length >= 2) return t.slice(0, 400);
-    let box = el.parentElement;
-    for (let i = 0; i < 4 && box; i++, box = box.parentElement) {
-      const lab = box.querySelector('label, legend, [class*="label"], [class*="Label"], [class*="question"], [class*="title"]');
-      if (lab && !lab.contains(el) && txt(lab)) return txt(lab).slice(0, 400);
+    for (const t of tries) if (wordy(t)) return t.slice(0, 400);
+    const near = nearText(el);
+    if (near) return near;
+    const last = clean(el.getAttribute('placeholder') || el.getAttribute('name') || '').replace(/[_\-[\]]+/g, ' ').trim();
+    return wordy(last) ? last : '';
+  }
+
+  const wordy = (t) => !!t && /\p{L}{2}/u.test(t);
+  const FIELDS = 'input:not([type="hidden"]), select, textarea';
+
+  function firstLine(text, skip) {
+    for (const raw of String(text || '').split(/\n+/)) {
+      const line = clean(raw);
+      if (!wordy(line) || /^\d+\s*\/\s*\d+$/.test(line)) continue;
+      if (skip && skip.some((s) => norm(s) === norm(line))) continue;
+      if (/^(this field is required|required|invalid input|please (enter|select|make|check)\b.*)$/i.test(line)) continue;
+      return line.slice(0, 400);
     }
-    return clean(el.getAttribute('placeholder') || el.getAttribute('name') || '').replace(/[_\-[\]]+/g, ' ').trim();
+    return '';
+  }
+
+  /** The text that sits with a field when no label is tied to it: the words of its own box, or of the block just before it. */
+  function nearText(node, skip) {
+    let cur = node;
+    for (let i = 0; i < 7; i++) {
+      const box = cur.parentElement;
+      if (!box || box === document.body) break;
+      const others = [...box.querySelectorAll(FIELDS)].filter((x) => x !== node && !node.contains(x) && vis(x));
+      if (others.length) {        // the box holds other fields too: only what comes right before this one counts
+        for (let sib = cur.previousElementSibling; sib; sib = sib.previousElementSibling) {
+          if (sib.querySelector(FIELDS) || sib.matches(FIELDS)) break;
+          const t = vis(sib) ? firstLine(sib.innerText, skip) : '';
+          if (t) return t;
+        }
+        return '';
+      }
+      const own = String(node.innerText || '');
+      let text = String(box.innerText || '');
+      if (own && text.includes(own)) text = text.replace(own, '\n');
+      const t = firstLine(text, skip);
+      if (t) return t;
+      cur = box;
+    }
+    return '';
   }
 
   function optionLabel(i) {
     const l = labelFor(i) || i.closest('label');
-    return txt(l) || clean(i.getAttribute('aria-label')) || clean(i.value);
+    return txt(l) || clean(i.getAttribute('aria-label')) || firstLine(i.parentElement ? i.parentElement.innerText : '') || clean(i.value);
   }
 
   function fieldError(el) {
@@ -107,11 +144,20 @@
       if (SKIP_TYPES.includes(type)) continue;
       if (SKIP_NAME.test(el.id || '') || SKIP_NAME.test(el.getAttribute('name') || '')) continue;
       if (type === 'radio' || type === 'checkbox') {
-        const group = el.closest('fieldset, [role="radiogroup"], [role="group"]') || groupOf(el);
+        let group = el.closest('fieldset, [role="radiogroup"], [role="group"]');
+        let mates = null;
+        if (type === 'radio' && el.name) {       // radios with one name are one question, wherever they sit
+          mates = [...root.querySelectorAll('input[type="radio"]')].filter((i) => i.name === el.name);
+          if (!group || !mates.every((i) => group.contains(i))) {
+            group = el.parentElement;
+            while (group && group !== root && !mates.every((i) => group.contains(i))) group = group.parentElement;
+          }
+        }
+        if (!group) group = groupOf(el);
         if (!group || seen.has(group)) continue;
         seen.add(group);
         if (!vis(group)) continue;
-        const inputs = [...group.querySelectorAll('input[type="radio"], input[type="checkbox"]')]
+        const inputs = (mates || [...group.querySelectorAll('input[type="radio"], input[type="checkbox"]')])
           .filter((i) => !SKIP_NAME.test(i.id || '') && !SKIP_NAME.test(optionLabel(i)));
         if (!inputs.length) continue;
         const options = inputs.map((i) => ({ id: tag(i), label: optionLabel(i), checked: !!i.checked }));
@@ -119,7 +165,12 @@
         if (options.every((o) => /\.(pdf|docx?)\b/i.test(o.label))) kind = 'resume';
         const required = inputs.some((i) => i.required || i.getAttribute('aria-required') === 'true')
           || /\*|required/i.test(group.textContent || '');
-        let question = questionFor(group);
+        let question = '';
+        if (group.tagName === 'FIELDSET' || group.getAttribute('role')) question = questionFor(group);
+        const labels = options.map((o) => o.label);
+        if (!wordy(question) || labels.some((l) => norm(l) === norm(question))) {
+          question = firstLine(group.innerText, labels) || nearText(group, labels);
+        }
         if (kind === 'single_checkbox' && (!question || question === options[0].label)) question = options[0].label;
         out.push({ kind, question, options, error: fieldError(group), required, fieldset: group.tagName === 'FIELDSET' });
         continue;
@@ -248,7 +299,7 @@
     const ask = [];
     for (const f of fields) {
       const redo = retry && !!f.error;
-      if (!f.question) continue;
+      if (!wordy(f.question)) continue;
       if (['text', 'numeric', 'textarea', 'email', 'tel', 'url', 'date'].includes(f.kind)) {
         if (f.value.trim() && !redo) continue;
         if (!f.required && !redo && f.kind === 'textarea' && /cover letter|additional|anything else|comments?|message/i.test(f.question)
@@ -386,5 +437,5 @@
       });
   }
 
-  window.JSTBForm = { sleep, vis, clean, txt, scan, fill, uploadCv, waitFor, click, buttons, send, fieldError, norm };
+  window.JSTBForm = { sleep, vis, clean, txt, wordy, scan, fill, uploadCv, waitFor, click, buttons, send, fieldError, norm };
 })();

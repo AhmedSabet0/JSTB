@@ -76,6 +76,14 @@ $('save').addEventListener('click', async () => {
 });
 $('signout').addEventListener('click', async (e) => { e.preventDefault(); await send({ t: 'signout' }); note = ''; refresh(); });
 $('answers').addEventListener('click', (e) => { e.preventDefault(); chrome.runtime.openOptionsPage(); });
+$('stuck').addEventListener('click', async (e) => {
+  e.preventDefault();
+  const s = await send({ t: 'last_stuck' });
+  if (!s) { note = 'No stuck form saved yet.'; return refresh(); }
+  await navigator.clipboard.writeText('JOB: ' + s.job + '\nURL: ' + s.url + '\nREASON: ' + s.reason + '\n\n' + s.html);
+  note = 'Copied the last stuck form. Paste it in the chat.';
+  refresh();
+});
 $('clear').addEventListener('click', async (e) => { e.preventDefault(); await send({ t: 'clear_log' }); refresh(); });
 
 refresh();
