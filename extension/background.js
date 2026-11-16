@@ -197,7 +197,8 @@ async function startRun() {
     return { ok: false, message: e.message };
   }
   await update((s) => {
-    s.running = true; s.nextAt = 0; s.message = 'Starting';
+    s.running = true; s.nextAt = 0; s.message = 'Starting'; s.queue = [];
+    for (const [id, v] of Object.entries(s.done)) if (v === 'stuck' || v === 'error') delete s.done[id];     // one more try
     addLog(s, 'Started (' + caps(s).perHour + ' per hour, up to ' + caps(s).perDay + ' a day)');
   });
   chrome.alarms.create('tick', { delayInMinutes: 0.5, periodInMinutes: 0.5 });
@@ -320,7 +321,7 @@ async function finish(tabId, res) {
         reason: String(res.reason || '').slice(0, 300), url: job.url });
     }
     const label = { applied: 'Applied', stuck: 'Stuck', error: 'Error', needs_you: 'Needs you', skipped: 'Skipped',
-      dry_run: 'Test run', daily_limit: 'LinkedIn limit' }[status] || status;
+      dry_run: 'Test run', daily_limit: 'LinkedIn limit', ai_down: 'No AI' }[status] || status;
     addLog(s, '  ' + label + (res.reason ? ': ' + res.reason : '') + (res.qa && res.qa.length ? ' (' + res.qa.length + ' answers)' : ''));
     s.nextAt = now() + (status === 'applied' || status === 'dry_run' ? gap : 20);
     s.message = status === 'applied' ? 'Applied. Next one in about ' + Math.max(1, Math.round(gap / 60)) + ' min' : 'Next job soon';
@@ -330,6 +331,7 @@ async function finish(tabId, res) {
     if (status === 'applied') await api(st, '/v1/jobs/match-action', { id: job.id, action: 'applied' });
     else if (status === 'skipped') await api(st, '/v1/jobs/match-action', { id: job.id, action: 'skipped' });
   } catch (e) { /* the report below still records it */ }
+  if (status === 'ai_down') return void await update((s) => { delete s.done[job.id]; });
   if (status === 'daily_limit') {
     await update((s) => { delete s.done[job.id]; });
     return void await stopRun("LinkedIn's daily Easy Apply limit is reached. Start again tomorrow.");
@@ -419,9 +421,12 @@ async function onMessage(msg, sender) {
         return { answers: out.answers };
       } catch (e) {
         await update((s) => { addLog(s, '  AI: ' + e.message); });
-        if (e.code === 'not_active' || e.code === 'ai_limit' || e.code === 'ai_not_configured') {
-          await finish(tabId, { status: 'error', reason: e.message });
-          await stopRun(e.message);
+        const down = e.status === 404 || e.status >= 500 || e.status === 0
+          || ['not_active', 'ai_limit', 'ai_not_configured', 'bad_model', 'upstream_auth'].includes(e.code);
+        if (down) {      // no AI, no answers: stop here and keep this job for the next run
+          const why = e.status === 404 ? 'The server has no AI service at ' + st.server + '/v1/ai/chat (it answered "Not Found").' : e.message;
+          await finish(tabId, { status: 'ai_down', reason: why });
+          await stopRun(why);
         }
         return { answers: {} };
       }
