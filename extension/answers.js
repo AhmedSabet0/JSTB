@@ -35,6 +35,15 @@ function nameFrom(user, cvText) {
   return line || (user && user.name) || '';
 }
 
+/** 01012345678 -> +201012345678, for a phone box that has a country picker. */
+function intlPhone(phone, dial) {
+  const v = String(phone || '').replace(/[\s\-().]/g, '');
+  if (v.startsWith('+')) return v;
+  if (v.startsWith('00')) return '+' + v.slice(2);
+  const code = '+' + String(dial || '+20').replace(/\D/g, '');
+  return code + v.replace(/^0+/, '');
+}
+
 /** An answer from your setup answers, or null when they do not cover this question. */
 export function ruleAnswer(f, data, user) {
   const q = norm(f.question);
@@ -47,12 +56,21 @@ export function ruleAnswer(f, data, user) {
   const name = nameFrom(user, data.cvText);
   const parts = name.split(/\s+/);
 
-  if (f.input === 'email' || auto === 'email' || has(q, /^(e-?mail|email address|your email)/)) return text(user && user.email);
-  if (auto === 'given-name' || has(q, /^(first|given) name/)) return text(parts[0]);
-  if (auto === 'family-name' || has(q, /^(last|family) name|^surname/)) return text(parts.slice(1).join(' '));
-  if (auto === 'name' || has(q, /^(full |your )?name$|^full legal name/)) return text(name);
-  if (f.input === 'tel' || auto.startsWith('tel') || has(q, /\b(phone|mobile|telephone|whatsapp)\b/)) {
-    return choice ? null : (p.phone || null);
+  const other = /\b(company|employer|school|university|manager|reference|referr|emergency|father|mother|spouse|recruiter)\b/.test(q);
+  const isPhone = f.input === 'tel' || auto.startsWith('tel') || has(q, /\b(phone|mobile|telephone|whatsapp|cell)\b/);
+  if (choice && has(q, /\bcountry\b|country code|dial(ing)? code/) && !has(q, /which countr|other countr|countries/)) {
+    const c = p.country || 'Egypt';            // also the flag picker of a phone box
+    return option(opts, c) || opts.find((o) => norm(o).includes(norm(c))) || (p.dial ? opts.find((o) => o.includes(p.dial)) : null) || null;
+  }
+  if (other && !isPhone) return null;
+  if (f.input === 'email' || auto === 'email' || has(q, /\be-?mail\b/)) return other ? null : text(user && user.email);
+  if (auto === 'given-name' || has(q, /\b(first|given) name\b/)) return text(parts[0]);
+  if (auto === 'family-name' || has(q, /\b(last|family) name\b|\bsurname\b/)) return text(parts.slice(1).join(' '));
+  if (auto === 'additional-name' || has(q, /\bmiddle name\b/)) return parts.length > 2 ? text(parts.slice(1, -1).join(' ')) : null;
+  if (auto === 'name' || has(q, /\b(full|your|legal|complete) name\b|^name$/)) return text(name);
+  if (isPhone) {
+    if (choice || other || !p.phone) return null;
+    return f.intl ? intlPhone(p.phone, p.dial) : p.phone;
   }
   if (has(q, /^(gender|sex)\b|what is your gender|your gender/)) return p.gender ? text(p.gender) : null;
   if (has(q, /\b(sponsor|sponsorship)\b/)) { const b = flag(p.sponsorship); return b === null ? null : yesNo(opts, b); }
@@ -124,7 +142,7 @@ function notes(data, user) {
   add('Name', nameFrom(user, data.cvText));
   add('Email', user && user.email);
   add('Phone', p.phone);
-  add('Lives in', p.city);
+  add('Lives in', [p.city, p.country].filter(Boolean).join(', '));
   add('Graduated in', p.graduation_year);
   if (p.current_salary) l.push('Current monthly salary: ' + p.current_salary + ' ' + (p.currency || ''));
   if (p.expected_salary) l.push('Expected monthly salary: ' + p.expected_salary + ' ' + (p.currency || ''));
@@ -225,6 +243,11 @@ export async function answerFields(fields, ctx, data, user, cache, chat) {
     let a = retry ? null : fit(f, experienceYears(f, data));
     if (a !== null) { answers[f.key] = a; continue; }
     if (norm(f.question).length < 2) continue;
+    if (f.preset) {            // already has a value: change it only when your own answers say otherwise, never by asking the AI
+      const mine = fit(f, ruleAnswer(f, data, user));
+      if (mine !== null && norm(mine) !== norm(f.preset)) answers[f.key] = mine;
+      continue;
+    }
     if (!retry && cache[key] !== undefined) a = fit(f, cache[key]);
     if (a === null && !retry) {
       const fact = (data.facts || []).find((x) => norm(x.label) === norm(f.question) || (x.asked || []).some((k) => norm(k) === norm(f.question)));

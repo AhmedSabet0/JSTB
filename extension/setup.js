@@ -1,6 +1,6 @@
 /* JSTB extension: the "My answers" page. */
 const KEYS = ['work_start_year', 'default_years', 'expected_salary', 'current_salary', 'currency', 'phone', 'city', 'notice_days',
-  'relocate', 'onsite', 'authorized', 'sponsorship', 'graduation_year', 'english', 'driving', 'military', 'gender'];
+  'relocate', 'onsite', 'authorized', 'sponsorship', 'graduation_year', 'english', 'driving', 'military', 'gender', 'dial', 'country'];
 const $ = (id) => document.getElementById(id);
 const send = (msg) => new Promise((resolve) => chrome.runtime.sendMessage(msg, (r) => resolve(chrome.runtime.lastError ? null : r)));
 
@@ -17,6 +17,8 @@ function show(el, value) {
   for (const k of KEYS) show($(k), r.profile[k] === undefined ? '' : r.profile[k]);
   if (!$('work_start_year').value && r.guessYear) $('work_start_year').value = r.guessYear;
   if (!$('default_years').value) $('default_years').value = 1;
+  if (!$('dial').value) $('dial').value = '+20';
+  if (!$('country').value) $('country').value = 'Egypt';
 })();
 
 $('save').addEventListener('click', async () => {

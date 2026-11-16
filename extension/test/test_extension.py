@@ -130,6 +130,24 @@ document.getElementById('go').onclick = function () {
     fetch('/odd/sent', {method: 'POST', body: JSON.stringify({fn: fn.value, em: em.value, c1: c1.checked, c2: c2.checked, c3: c3.checked})}).then(function () {
       m.innerHTML = '<h1>Thank you for applying</h1>'; }); };
 };</script></body></html>"""
+CAREERS = """<!doctype html><html><head><meta charset="utf-8"><title>Apply now | Santech</title></head><body>
+<div role="dialog" aria-label="cookies" style="position:fixed;bottom:0">We use cookies <button>Accept</button></div>
+<header><a href="/">Home</a><input placeholder="Search jobs"></header>
+<div id="page"><h1>Senior DevOps Engineer</h1>
+<div aria-label="breadcrumb"><a href="/cp/jobs">Job Openings</a> &gt; <a href="/cp/job">Senior DevOps Engineer</a> &gt; Apply</div>
+<div><div>What is your full name? *</div><input id="nm" placeholder="Your full name*"></div>
+<div><div>Resume</div><input readonly placeholder="Select the attachment"><button type="button" onclick="up.click()">Browse</button><input type="file" id="up" style="display:none"></div>
+<div><div>Add cover letter</div><textarea id="cl"></textarea></div>
+<div><div>What is your phone number?</div><div class="PhoneInput"><div class="PhoneInputCountry"><select id="cc" aria-label="Phone number country" style="opacity:0;position:absolute;width:40px;height:30px"><option value="ZZ">International</option><option value="US" selected>United States</option><option value="EG">Egypt</option></select><span class="flag">US</span></div><input id="ph" type="tel" placeholder="Enter a phone number"></div></div>
+<div><div>What is your email address?</div><input id="em" placeholder="olivia@manatal.com"></div>
+<div><input type="checkbox" id="ag" onchange="go.disabled=!this.checked"><span>I agree to the <a href="/t">terms and conditions</a> &amp; <a href="/p">privacy policy</a></span></div>
+<button id="go" disabled>Apply</button> <button type="button">Cancel</button></div>
+<script>
+document.getElementById('go').onclick = function () {
+  const f = document.getElementById('up').files[0];
+  fetch('/cp/sent', {method: 'POST', body: JSON.stringify({nm: nm.value, cl: cl.value, cc: cc.value, ph: ph.value, em: em.value, ag: ag.checked, file: f ? f.name : ''})})
+    .then(function () { document.getElementById('page').innerHTML = '<h1>Thank you for applying</h1>'; });
+};</script></body></html>"""
 POSTED = {}
 
 
@@ -147,7 +165,7 @@ class Pages(BaseHTTPRequestHandler):
 
     def do_GET(self):
         path = urlparse(self.path).path
-        self.page(FORM if path == "/ats/apply" else RESUME_SITE if path == "/wd/apply" else ODD_SITE if path == "/odd/job" else WUZZUF if path.startswith("/wz/jobs") else "<h1>Nothing here</h1>")
+        self.page(FORM if path == "/ats/apply" else RESUME_SITE if path == "/wd/apply" else ODD_SITE if path == "/odd/job" else CAREERS if path == "/cp/job/apply" else WUZZUF if path.startswith("/wz/jobs") else "<h1>Nothing here</h1>")
 
     def do_POST(self):
         raw = self.rfile.read(int(self.headers.get("Content-Length", 0)))
@@ -196,7 +214,8 @@ def seed(email):
     jobs = [("wz1", "Cloud Engineer", "Delta Tech", PAGES + "/wz/jobs/p/abc-cloud-engineer", 90),
             ("ats1", "Platform Engineer", "Nile Systems", PAGES + "/ats/apply", 80),
             ("wd1", "System Administrator", "Rail Co", PAGES + "/wd/apply", 70),
-            ("odd1", "Network Engineer", "Odd Co", PAGES + "/odd/job", 65)]
+            ("odd1", "Network Engineer", "Odd Co", PAGES + "/odd/job", 65),
+            ("cp1", "Senior DevOps Engineer", "Santech", PAGES + "/cp/job/apply", 60)]
     if LI:
         jobs += [("111", "DevOps Engineer", "Acme", LI + "/jobs/view/111/", 95)]
     with db.tx() as t:
@@ -291,6 +310,10 @@ with sync_playwright() as p:
           and wd.get("file") == "Sara Adel CV.pdf", (done, wd, list(POSTED)))
     check("what the site did not fill is answered after it", wd.get("y") == "1", wd)
     check("questions without a label tag are still read", (wd.get("c"), wd.get("rl")) == ("Cairo", "n"), wd)
+    cp = json.loads(POSTED.get("/cp/sent", b"{}"))
+    check("a careers page with no form tag is filled by the script alone (no AI clicks)", done.get("li:cp1") == "applied" and len(GUIDED) == 2, (done, GUIDED, cp))
+    check("full name, email, CV and the agreement box", (cp.get("nm"), cp.get("em"), cp.get("file"), cp.get("ag")) == ("Sara Adel", "sara@example.com", "Sara Adel CV.pdf", True), cp)
+    check("the phone's country is set to Egypt and the number has its code", (cp.get("cc"), cp.get("ph")) == ("EG", "+201012345678"), cp)
     odd = json.loads(POSTED.get("/odd/sent", b"{}"))
     check("a page it does not understand: the AI says what to click, twice", done.get("li:odd1") == "applied" and len(GUIDED) == 2 and all(GUIDED), (done, GUIDED, odd))
     check("consent boxes are ticked, the newsletter is not", (odd.get("c1"), odd.get("c2"), odd.get("c3")) == (True, True, False) and odd.get("fn") == "Sara", odd)

@@ -252,17 +252,35 @@
   const NOT_RE = /linkedin|indeed|google|facebook|seek|xing|sign in|log ?in|save for later|share|refer|alert/i;
   const THANKS_RE = /thank you for (applying|your application|your interest)|application (has been |was |is )?(received|submitted|sent|complete)|we('ve| have) received your application|successfully (applied|submitted)|applied successfully|you('ve| have) (already )?applied/i;
 
+  const SEARCHY = /search|keyword|query|filter|copy|share|subscribe|newsletter|^q$/i;
+  const OUTSIDE = 'header, nav, footer, [role="search"], [role="navigation"], [role="banner"], [role="contentinfo"]';
+
+  /** The fields a candidate fills in: not search boxes, not the site's header or footer, not a password. */
+  function realFields() {
+    return [...document.querySelectorAll('input:not([type="hidden"]), select, textarea')].filter((i) => {
+      const type = (i.getAttribute('type') || '').toLowerCase();
+      if (['submit', 'button', 'image', 'reset', 'search', 'password'].includes(type)) return false;
+      if (type !== 'file' && !vis(i)) return false;          // a file input is usually hidden behind a "Browse" button
+      if (i.closest(OUTSIDE)) return false;
+      return !SEARCHY.test(`${i.id} ${i.name} ${i.getAttribute('placeholder') || ''} ${i.getAttribute('title') || ''} ${i.getAttribute('aria-label') || ''}`);
+    });
+  }
+
+  /** The application form of this page, with or without a <form> tag: the block that holds its fields. Null when there is none. */
   function formRoot() {
-    const forms = [...document.querySelectorAll('form')].filter(vis)
-      .map((f) => ({ f, n: [...f.querySelectorAll('input:not([type="hidden"]), select, textarea')].filter(vis).length }))
-      .filter((x) => x.n >= 2 && !/search|login|sign-?in|subscribe|newsletter/i.test((x.f.id || '') + ' ' + (x.f.className || '') + ' ' + (x.f.getAttribute('action') || '')))
-      .sort((a, b) => b.n - a.n);
-    if (forms.length) return forms[0].f;
-    // no <form>: a visible block with real fields in it (search and filter boxes of a job page do not count)
-    const real = (i) => vis(i) && !i.readOnly && (i.type || '') !== 'search'
-      && !/search|keyword|query|filter|location|copy|share|^q$/i.test(`${i.id} ${i.name} ${i.getAttribute('placeholder') || ''} ${i.getAttribute('title') || ''} ${i.getAttribute('aria-label') || ''}`);
-    const main = [...document.querySelectorAll('[role="dialog"], dialog[open], main, #main, #content')].find(vis) || document.body;
-    return [...main.querySelectorAll('input:not([type="hidden"]), select, textarea')].filter(real).length >= 3 ? main : null;
+    const all = realFields();
+    const shown = all.filter((f) => f.type !== 'file');
+    if (!shown.length) return null;
+    const hasFile = all.length > shown.length;
+    const inForm = [...document.querySelectorAll('form')].filter(vis)
+      .filter((f) => !/search|login|sign-?in|subscribe|newsletter/i.test((f.id || '') + ' ' + (f.className || '') + ' ' + (f.getAttribute('action') || '')))
+      .map((f) => ({ f, n: shown.filter((x) => f.contains(x)).length })).filter((x) => x.n >= 2).sort((a, b) => b.n - a.n);
+    const enough = shown.length >= 3 || hasFile || inForm.length > 0 || (shown.length >= 2 && /apply|application/i.test(location.pathname));
+    if (!enough) return null;
+    if (inForm.length && inForm[0].n >= shown.length / 2) return inForm[0].f;
+    let root = shown[0].parentElement;
+    while (root && root !== document.body && !all.every((x) => root.contains(x))) root = root.parentElement;
+    return root || document.body;
   }
 
   const siteErrors = () => {
@@ -275,12 +293,15 @@
   async function guide(goal) {
     const els = [...document.querySelectorAll('button, a[href], [role="button"], input[type="submit"], input[type="button"]')]
       .filter((e) => vis(e) && !e.disabled && e.getAttribute('aria-disabled') !== 'true')
+      .filter((e) => !e.closest(OUTSIDE + ', [aria-label*="breadcrumb" i], [class*="breadcrumb" i]'))
+      .filter((e) => !(e.tagName === 'A' && (e.href === location.href || e.href === location.href.replace(/\/apply\/?$/, ''))))
       .map((e) => ({ e, t: clean(e.innerText || e.value || e.getAttribute('aria-label') || e.getAttribute('title') || '').slice(0, 80) }))
-      .filter((x) => x.t && !/sign ?in|log ?in|register|create (an )?account|google|facebook|linkedin|apple|share|cookie|privacy|terms|back|cancel/i.test(x.t))
+      .filter((x) => x.t && F.norm(x.t) !== F.norm(job.title)
+        && !/sign ?in|log ?in|register|create (an )?account|google|facebook|linkedin|apple|share|cookie|privacy|terms|back|cancel|job openings|all jobs|other jobs|home/i.test(x.t))
       .slice(0, 70);
     if (!els.length) return false;
     const r = await send({ t: 'guide', goal, title: document.title, host: location.hostname, text: clean(pageText()).slice(0, 1500),
-      elements: els.map((x, i) => (i + 1) + ' | ' + x.e.tagName.toLowerCase() + ' | ' + x.t) });
+      elements: els.map((x, i) => ({ n: i + 1, tag: x.e.tagName.toLowerCase(), t: x.t })) });
     const pick = r && r.click ? els[Number(r.click) - 1] : null;
     if (!pick) { if (r && r.reason) log('AI: nothing to click (' + r.reason + ')'); return false; }
     if (noSubmit && /submit|send|finish|complete/i.test(pick.t)) { await done('dry_run', 'Stopped before "' + pick.t + '" (test run)'); return 'ended'; }
@@ -357,8 +378,8 @@
       await sleep(800);
       if (hasCaptcha()) return done('needs_you', 'This form has a CAPTCHA: finish it yourself', { keepTab: true });
       const r = area() || document;
-      const submit = F.buttons(r, SUBMIT_RE, NOT_RE)[0];
-      const next = F.buttons(r, NEXT_RE, NOT_RE)[0];
+      const submit = F.buttons(r, SUBMIT_RE, NOT_RE)[0] || F.buttons(document, SUBMIT_RE, NOT_RE).find((b) => !b.closest(OUTSIDE));
+      const next = F.buttons(r, NEXT_RE, NOT_RE)[0] || F.buttons(document, NEXT_RE, NOT_RE).find((b) => !b.closest(OUTSIDE));
       const btn = next || submit;
       if (!btn) {
         const g = await guide('The application form is filled. Choose the button that continues to the next step or submits the application.');

@@ -233,8 +233,13 @@
       else if (type === 'date') kind = 'date';
       else if (type === 'url') kind = 'url';
       const typeahead = el.getAttribute('role') === 'combobox' || !!el.getAttribute('aria-autocomplete');
+      let intl = false;            // a phone box with a flag / country picker next to it wants the number with its country code
+      for (let up = el.parentElement, n = 0; up && n < 3 && !intl; up = up.parentElement, n++) {
+        if ([...up.querySelectorAll('input:not([type="hidden"]), textarea')].filter(vis).length > 1) break;
+        intl = !!up.querySelector('[class*="flag" i], [class*="country" i], [aria-label*="country" i], .iti, select');
+      }
       out.push({
-        kind, id, question: questionFor(el), value: el.value || '', error: fieldError(el), required, typeahead,
+        kind, id, question: questionFor(el), value: el.value || '', error: fieldError(el), required, typeahead, intl,
         placeholder: el.getAttribute('placeholder') || '', maxlen: el.maxLength > 0 ? el.maxLength : 0,
         auto: el.getAttribute('autocomplete') || '', name: el.getAttribute('name') || '',
       });
@@ -342,11 +347,12 @@
             && !/cover letter/i.test(f.question)) continue;
         ask.push({ key: f.id, question: f.question, kind: f.kind === 'numeric' ? 'numeric' : (f.kind === 'textarea' ? 'textarea' : 'text'),
           input: f.kind, maxlen: f.maxlen, placeholder: f.placeholder, error: redo ? f.error : '', rejected: redo ? f.value : '',
-          auto: f.auto, name: f.name, required: f.required });
+          auto: f.auto, name: f.name, required: f.required, intl: f.intl });
       } else if (f.kind === 'select') {
-        if (f.selected && !redo) continue;
+        const preset = f.selected && !redo && /\bcountry\b|dial/i.test(f.question) ? f.selected : '';   // a country picker starts on a default
+        if (f.selected && !redo && !preset) continue;
         if (!f.options.length) continue;
-        ask.push({ key: f.id, question: f.question, kind: 'choice', options: f.options.map((o) => o.label),
+        ask.push({ key: f.id, question: f.question, kind: 'choice', options: f.options.map((o) => o.label), preset,
           error: redo ? f.error : '', rejected: redo ? f.selected : '', required: f.required });
       } else if (f.kind === 'radio') {
         if (f.options.some((o) => o.checked) && !redo) continue;
